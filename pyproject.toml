@@ -1,0 +1,22 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools"]
+
+[tool.setuptools]
+packages = ["pie_clean"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+pie_clean = ["*.json"]
+
+[project]
+name = "PIE-clean"
+version = "0.1"
+description = "Parkinson's Insight Engine Data Cleaner (PIE-clean) is a Python-based data cleaning pipeline designed for researchers working with the Michael J. Fox Foundation's Parkinson's Progression Markers Initiative (PPMI) dataset and other MJFF data. PIE-clean pairs with PIE for end-to-end machine learning data analysis."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  {name = "Cameron Hamilton", email = "Cameron@AllianceAI.co"},
+  {name = "Victoria Catterson", email = "vic@cowlet.org"}
+]
+license = "MIT"
