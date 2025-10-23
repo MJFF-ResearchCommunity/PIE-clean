@@ -1,0 +1,21 @@
+﻿PATNO,COHORT,COHORT_DEFINITION,ENROLL_DATE,ENROLL_STATUS,STATUS_DATE,SCREENEDAM,ENROLL_AGE,INEXPAGE,AV133STDY,TAUSTDY,GAITSTDY,PISTDY,SV2ASTDY,NXTAUSTDY,DATELIG,PPMI_ONLINE_ENROLL,ENRLPINK1,ENRLPRKN,ENRLSRDC,ENRLNORM,ENRLOTHGV,ENRLHPSM,ENRLRBD,ENRLLRRK2,ENRLSNCA,ENRLGBA
+9999,1,Parkinson's Disease,01/2012,Complete,01/2022,,47,,0,0,0,0,0,0,,NO,0,0,1,,,0,0,0,0,0
+9998,1,Parkinson's Disease,02/2013,Withdrew,03/2017,,52,,0,0,0,0,0,0,,NO,0,1,0,,,0,0,0,0,0
+9997,2,Healthy Control,03/2014,Withdrew,04/2018,,57,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0
+9996,2,Healthy Control,04/2015,Enrolled,08/2025,,62,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0
+9995,1,Parkinson's Disease,05/2016,Enrolled,08/2025,,67,,0,0,0,0,0,0,,YES,1,0,0,,,0,0,0,0,0
+9994,2,Healthy Control,06/2017,Declined,07/2018,,72,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0
+9993,2,Healthy Control,07/2018,Enrolled,08/2025,,77,,0,0,0,0,0,0,,YES,0,0,0,,,0,0,0,0,0
+9992,1,Parkinson's Disease,08/2019,Enrolled,08/2025,,82,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,1,0
+9991,4,Prodromal,09/2020,Enrolled,08/2025,,48,,0,0,0,0,0,0,,YES,0,0,0,,,0,0,0,0,0
+9990,4,Prodromal,10/2021,Enrolled,08/2025,,53,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0
+9989,1,Parkinson's Disease,11/2022,Enrolled,08/2025,,58,,0,0,0,0,0,0,,NO,,,,,,0,0,0,0,1
+9988,2,Healthy Control,12/2023,Enrolled,08/2025,,63,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0
+9987,4,Prodromal,01/2024,Enrolled,08/2025,,68,,0,0,0,0,0,0,,NO,,,,,,0,0,0,0,0
+9986,1,Parkinson's Disease,02/2025,Enrolled,08/2025,,73,,0,0,0,0,0,0,,NO,,,,,,0,0,0,0,0
+9985,2,Healthy Control,03/2012,Complete,03/2022,,78,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0
+9984,4,Prodromal,04/2013,Declined,05/2015,,83,,0,0,0,0,0,0,,NO,0,0,0,,,0,1,0,0,0
+9983,3,SWEDD,05/2014,Enrolled,08/2025,,49,,0,0,0,0,0,0,,NO,,,,,,0,0,0,0,0
+9982,1,Parkinson's Disease,06/2015,Enrolled,08/2025,,54,,0,0,0,0,0,0,,NO,0,0,1,,,0,0,0,0,0
+9981,1,Parkinson's Disease,,Excluded,08/2016,,,,,,,,,,,NO,,,,,,0,0,0,0,0
+9980,1,Parkinson's Disease,08/2017,Enrolled,08/2025,,64,,0,0,0,0,0,0,,NO,0,0,0,,,0,0,0,0,0

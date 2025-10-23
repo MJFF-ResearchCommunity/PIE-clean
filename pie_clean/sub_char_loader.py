@@ -18,29 +18,6 @@ FILE_PREFIXES = [
     "Subject_Cohort_History"
 ]
 
-def _sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
-    """
-    Rename columns in df if they already end with '_x' or '_y',
-    so that Pandas won't clash when merging with suffixes=('_x', '_y').
-    Example: 'COL_x' -> 'COL_x_orig'.
-    """
-    rename_map = {}
-    for col in df.columns:
-        if col.endswith("_x") or col.endswith("_y"):
-            base = col[:-2]
-            new_col_candidate = f"{base}_{col[-1]}_orig" # e.g. SOME_COL_x_orig
-            # Ensure new_col_candidate is unique
-            count = 0
-            new_col = new_col_candidate
-            while new_col in df.columns or new_col in rename_map.values():
-                count += 1
-                new_col = f"{new_col_candidate}{count}"
-            rename_map[col] = new_col
-    if rename_map:
-        df.rename(columns=rename_map, inplace=True)
-        logger.debug(f"Sanitized existing suffixed columns: {rename_map}")
-
-
 def _general_deduplicate_suffixed_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Identifies all columns with '_x' and '_y' suffixes, then merges them
@@ -209,15 +186,15 @@ def load_ppmi_subject_characteristics(folder_path: str) -> pd.DataFrame:
     """
     df_merged = None
     found_any_file = False
-    
+
     all_csv_files = list(glob.iglob(os.path.join(folder_path, "**/*.csv"), recursive=True))
-    
+
     for prefix in FILE_PREFIXES:
         matching_files = [f for f in all_csv_files if os.path.basename(f).startswith(prefix)]
         if not matching_files:
             logger.debug(f"No CSV file found for prefix: {prefix} in {folder_path}")
             continue
-            
+
         for csv_file_path in matching_files:
             try:
                 logger.debug(f"Loading subject characteristics file: {csv_file_path}")
@@ -230,7 +207,7 @@ def load_ppmi_subject_characteristics(folder_path: str) -> pd.DataFrame:
             if "PATNO" not in df_temp.columns:
                 logger.warning(f"File {csv_file_path} is missing PATNO column, skipping.")
                 continue
-            
+
             # Standardize PATNO to string early
             df_temp['PATNO'] = df_temp['PATNO'].astype(str)
 
