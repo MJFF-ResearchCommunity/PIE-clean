@@ -70,45 +70,6 @@ def sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
         df.rename(columns=rename_map, inplace=True)
 
 
-def deduplicate_columns(df: pd.DataFrame, duplicate_columns: list[str]) -> pd.DataFrame:
-    """
-    For each <col> in duplicate_columns:
-      If <col>_x and <col>_y both exist, combine them row-wise:
-        - If both empty => NaN
-        - If one is empty => use the other
-        - If both differ => join with '|'
-        - If both match => keep one
-      Then drops the original <col>_x / <col>_y.
-    """
-    for col in duplicate_columns:
-        col_x = f"{col}_x"
-        col_y = f"{col}_y"
-
-        if col_x in df.columns and col_y in df.columns:
-            if col not in df.columns:
-                df[col] = np.nan
-
-            def combine_values(row):
-                v1 = row[col_x]
-                v2 = row[col_y]
-                empty1 = pd.isna(v1) or v1 == ""
-                empty2 = pd.isna(v2) or v2 == ""
-
-                if empty1 and empty2:
-                    return np.nan
-                elif empty1 and not empty2:
-                    return v2
-                elif not empty1 and empty2:
-                    return v1
-                else:
-                    return v1 if str(v1) == str(v2) else f"{v1}|{v2}"
-
-            df[col] = df.apply(combine_values, axis=1)
-            df.drop(columns=[col_x, col_y], inplace=True)
-
-    return df
-
-
 def load_ppmi_medical_history(folder_path: str) -> pd.DataFrame:
     """
     1) Lists all CSV files in 'folder_path' that start with any MEDICAL_HISTORY_PREFIX.
@@ -139,6 +100,7 @@ def load_ppmi_medical_history(folder_path: str) -> pd.DataFrame:
         for filename in matching_files:
             csv_file = os.path.join(folder_path, filename)
             try:
+                logger.debug(f"Loading medical history file: {csv_file}")
                 df_temp = pd.read_csv(csv_file)
                 found_any_file = True
             except Exception as e:
