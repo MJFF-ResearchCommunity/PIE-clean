@@ -10,10 +10,7 @@ logger = logging.getLogger(f"PIE.{__name__}")
 FILE_PREFIXES = [
     "Gait_Data___Arm_swing",
     "Gait_Substudy_Gait_Mobility_Assessment",
-    "MDS-UPDRS_Part_I",
-    "MDS-UPDRS_Part_II",
-    "MDS-UPDRS_Part_III",
-    "MDS-UPDRS_Part_IV",
+    "MDS-UPDRS_Part_I", # Picks up Parts I, II, III, IV, and _Patient versions
     "Modified_Schwab",
     "Neuro_QoL", # Note: Neuro_QoL also appears in Non-motor. Prefixes will ensure correct loading.
     "Participant_Motor_Function"
@@ -204,16 +201,18 @@ def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
     """
     df_merged = None
     found_any_file = False
-    
+
     all_csv_files = list(glob.iglob(os.path.join(folder_path, "**/*.csv"), recursive=True))
-    
+
     for prefix in FILE_PREFIXES:
         matching_files = [f for f in all_csv_files if os.path.basename(f).startswith(prefix)]
         if not matching_files:
             logger.debug(f"No CSV file found for prefix: {prefix} in {folder_path}")
             continue
-        
+
+        print(matching_files)
         for csv_file_path in matching_files:
+            print(f"********* in for with {csv_file_path} *********")
             try:
                 logger.debug(f"Loading motor assessment file: {csv_file_path}")
                 df_temp = pd.read_csv(csv_file_path, low_memory=False)
@@ -225,15 +224,15 @@ def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
             if "PATNO" not in df_temp.columns:
                 logger.warning(f"File {csv_file_path} is missing PATNO column, skipping.")
                 continue
-            
+
             df_temp['PATNO'] = df_temp['PATNO'].astype(str)
-            
+
             if df_merged is None:
                 df_merged = df_temp
             else:
                 if 'PATNO' in df_merged.columns:
                      df_merged['PATNO'] = df_merged['PATNO'].astype(str)
-                
+
                 merge_keys = ["PATNO"]
                 if "EVENT_ID" in df_merged.columns and "EVENT_ID" in df_temp.columns:
                     merge_keys.append("EVENT_ID")
@@ -251,11 +250,11 @@ def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
                     logger.error(f"df_temp columns: {df_temp.columns.tolist()}")
                     logger.error(f"Merge keys: {merge_keys}")
                     continue
-    
+
     if not found_any_file or df_merged is None or df_merged.empty:
         logger.warning("No matching motor assessment CSV files were successfully loaded or merged. Returning empty DataFrame.")
         return pd.DataFrame()
-    
+
     if "EVENT_ID" in df_merged.columns:
         logger.debug("Motor assessments: Aggregating rows to ensure unique (PATNO, EVENT_ID) pairs...")
         df_merged = _aggregate_by_patno_eventid(df_merged)
@@ -284,7 +283,7 @@ def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
                  df_merged = df_merged.groupby("PATNO", as_index=False).agg(agg_dict_patno)
              else: 
                  df_merged = df_merged.drop_duplicates(subset=["PATNO"], keep='first')
-        
+
     logger.info(f"Final loaded motor assessments shape: {df_merged.shape}")
     return df_merged
 
@@ -308,4 +307,4 @@ def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
 #     df_motor.to_csv("ppmi_motor_assessments.csv", index=False)
 
 # if __name__ == "__main__":
-#     main() 
+#     main()

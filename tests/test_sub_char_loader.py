@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pie_clean.sub_char_loader import (
     load_ppmi_subject_characteristics, _general_deduplicate_suffixed_columns,
-    _aggregate_by_patno_eventid
+    _aggregate_by_patno_eventid, FILE_PREFIXES
 )
 
 logging.getLogger("PIE").setLevel(logging.DEBUG)
@@ -23,10 +23,11 @@ def test_load_ppmi_subject_characteristics(caplog):
 
     # We expect to see certain files, which are handled in specific ways
     # The logger output clarifies how they were handled
-    assert "Age_at_visit" in caplog.text
-    assert "Family_History" in caplog.text
-    assert "Participant_Status" in caplog.text
+    # First, just check that we're looking for everything
+    for filename in FILE_PREFIXES:
+        assert filename in caplog.text
 
+    # Now pick out some specifics
     for record in caplog.records:
         if "Age_at_visit" in record.message:
             # One and only one message, for loading

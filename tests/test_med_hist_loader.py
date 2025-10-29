@@ -7,7 +7,10 @@ import pandas as pd
 # Add the parent directory to the Python path to make the pie module importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pie_clean.med_hist_loader import load_ppmi_medical_history, sanitize_suffixes_in_df
+from pie_clean.med_hist_loader import (
+    load_ppmi_medical_history, sanitize_suffixes_in_df,
+    MEDICAL_HISTORY_PREFIXES
+)
 
 logging.getLogger("PIE").setLevel(logging.DEBUG)
 DATA_DIR = "tests/test_data"
@@ -21,10 +24,11 @@ def test_load_ppmi_medical_history(caplog):
 
     # We expect to see certain files, which are handled in specific ways
     # The logger output clarifies how they were handled
-    assert "General_Physical_Exam" in caplog.text
-    assert "LEDD_Concomitant_Medication" in caplog.text
-    assert "Vital_Signs" in caplog.text
+    # First, just check that we're looking for everything
+    for filename in MEDICAL_HISTORY_PREFIXES:
+        assert filename in caplog.text
 
+    # Now pick out some specifics
     for record in caplog.records:
         if "General_Physical_Exam" in record.message:
             # One and only one message, for loading
