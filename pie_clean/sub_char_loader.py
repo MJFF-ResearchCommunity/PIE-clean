@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import numpy as np
 
-from pie_clean.utils import general_deduplicate_suffixed_columns
+from pie_clean.utils import aggregate_by_patno_eventid, general_deduplicate_suffixed_columns
 
 logger = logging.getLogger(f"PIE.{__name__}")
 
@@ -19,93 +19,6 @@ FILE_PREFIXES = [
     "Socio-Economics",
     "Subject_Cohort_History"
 ]
-
-
-def _aggregate_by_patno_eventid(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensures (PATNO, EVENT_ID) pairs are unique by grouping and aggregating.
-    For non-grouping columns, it combines unique non-null string values with a pipe.
-    If only one unique non-null value exists, it's used directly (attempting to keep original type).
-    """
-    if df.empty:
-        return df
-
-    group_cols = ["PATNO", "EVENT_ID"]
-    if not all(gc in df.columns for gc in group_cols):
-        logger.warning(f"Subject Characteristics: Cannot aggregate by {group_cols} as one or more are missing. Returning original DataFrame.")
-        return df
-
-    df_copy = df.copy()
-    if 'PATNO' in df_copy.columns:
-        df_copy['PATNO'] = df_copy['PATNO'].astype(str)
-
-    if not df_copy.duplicated(subset=group_cols).any():
-        return df_copy
-
-    logger.info(
-        "Subject Characteristics: Consolidating rows with duplicate (PATNO, EVENT_ID) pairs. "
-        "Non-null values for other columns will be pipe-separated if different."
-    )
-
-    agg_cols = [col for col in df.columns if col not in group_cols]
-    if not agg_cols:
-        return df_copy.drop_duplicates(subset=group_cols, keep='first')
-
-    df_indexed = df_copy.set_index(group_cols)
-
-    grouped = df_indexed.groupby(level=group_cols)
-    nunique_df = grouped[agg_cols].nunique()
-    result_df = grouped[agg_cols].first()
-
-    pipe_separated_stats = {}
-
-    for col in agg_cols:
-        multi_value_groups_mask = nunique_df[col] > 1
-        if not multi_value_groups_mask.any():
-            continue
-
-        num_affected_groups = multi_value_groups_mask.sum()
-        if num_affected_groups > 0:
-            pipe_separated_stats[col] = num_affected_groups
-
-        multi_value_group_indices = nunique_df.index[multi_value_groups_mask]
-        
-        rows_for_col_agg_mask = df_indexed.index.isin(multi_value_group_indices)
-        df_subset_for_col = df_indexed.loc[rows_for_col_agg_mask, [col]]
-
-        if df_subset_for_col.empty:
-            continue
-
-        def string_agg_slow(series: pd.Series) -> str:
-            unique_strings = series.dropna().astype(str).unique()
-            return "|".join(sorted(unique_strings))
-
-        slow_agg_results = df_subset_for_col.groupby(level=group_cols)[col].agg(string_agg_slow)
-
-        # If the target column is not already an object/string type, cast it.
-        # This prevents FutureWarning about incompatible dtypes.
-        if result_df[col].dtype != 'object' and not pd.api.types.is_string_dtype(result_df[col].dtype):
-            result_df[col] = result_df[col].astype(object)
-
-        result_df.loc[slow_agg_results.index, col] = slow_agg_results
-        
-    df_aggregated = result_df.reset_index()
-
-    if pipe_separated_stats:
-        logger.info("Summary of pipe-separated columns for Subject Characteristics:")
-        sorted_stats = sorted(pipe_separated_stats.items(), key=lambda item: item[1], reverse=True)
-        
-        for i, (col, count) in enumerate(sorted_stats):
-            logger.info(f"  - Column '{col}': {count} groups had multiple values.")
-            if i < 3: # Log examples for the top 3
-                first_offending_group_index = nunique_df.index[nunique_df[col] > 1][0]
-                conflicting_values = df_indexed.loc[first_offending_group_index, col].dropna().astype(str).unique()
-                logger.info(f"    - Example for group {first_offending_group_index}: values were {list(conflicting_values)}")
-    
-    ordered_cols = group_cols + [col for col in df.columns if col in df_aggregated.columns and col not in group_cols]
-    final_ordered_cols = [col for col in ordered_cols if col in df_aggregated.columns]
-
-    return df_aggregated[final_ordered_cols]
 
 
 def load_ppmi_subject_characteristics(folder_path: str) -> pd.DataFrame:
@@ -178,7 +91,7 @@ def load_ppmi_subject_characteristics(folder_path: str) -> pd.DataFrame:
     # This step must happen after all files are merged and _x/_y columns are resolved.
     if "EVENT_ID" in df_merged.columns:
         logger.debug("Aggregating rows to ensure unique (PATNO, EVENT_ID) pairs for Subject Characteristics...")
-        df_merged = _aggregate_by_patno_eventid(df_merged)
+        df_merged = aggregate_by_patno_eventid(df_merged, "Subject Characteristics")
     else:
         logger.warning("EVENT_ID column not found in the final merged subject characteristics DataFrame. "
                        "Ensuring PATNO uniqueness only if duplicates exist.")
@@ -189,8 +102,8 @@ def load_ppmi_subject_characteristics(folder_path: str) -> pd.DataFrame:
                 "by combining unique non-null values for other columns."
              )
              # Temporarily rename PATNO for the groupby function if EVENT_ID is missing
-             # This is a bit of a hack to reuse the same _aggregate_by_patno_eventid logic
-             # Or better, adapt _aggregate_by_patno_eventid to handle single key
+             # This is a bit of a hack to reuse the same aggregate_by_patno_eventid logic
+             # Or better, adapt aggregate_by_patno_eventid to handle single key
              
              # Simplified aggregation for PATNO only if EVENT_ID is missing
              def combine_patno_only_series(series):
