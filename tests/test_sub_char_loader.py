@@ -41,6 +41,12 @@ def test_load_ppmi_subject_characteristics(caplog):
                     "on PATNO only (it lacks EVENT_ID)" in record.message
             # And merging must be in there somewhere
             assert "on PATNO only (it lacks EVENT_ID)" in caplog.text
+        elif "Subject_Cohort_History" in record.message:
+            # Two logs: one for loading, and one for merging
+            assert f"{load_msg}/Subject_Cohort_History" in record.message or \
+                    "on PATNO only (it lacks EVENT_ID)" in record.message
+            # And merging must be in there somewhere
+            assert "on PATNO only (it lacks EVENT_ID)" in caplog.text
 
     # We expect to see something from every table merged together in the output
     assert "PATNO" in df.columns
@@ -48,6 +54,7 @@ def test_load_ppmi_subject_characteristics(caplog):
     assert "AGE_AT_VISIT" in df.columns
     assert "ANYFAMPD" in df.columns
     assert "ENRLGBA" in df.columns
+    assert "APPRDX" in df.columns
 
     # Ensure that EVENT_IDs across tables have been properly merged
     pat = df[df["PATNO"]=="9999"]
@@ -59,6 +66,17 @@ def test_load_ppmi_subject_characteristics(caplog):
     assert pd.isnull(pat[pat["EVENT_ID"]=="V01"]["ANYFAMPD"].iloc[0])
     assert not pd.isnull(pat[pat["EVENT_ID"]=="V04"]["AGE_AT_VISIT"].iloc[0])
     assert not pd.isnull(pat[pat["EVENT_ID"]=="V04"]["ANYFAMPD"].iloc[0])
+
+    # Ensure columns have been deduplicated correctly. COHORT appears in 2 tables
+    assert "COHORT" in df.columns.tolist()
+    assert "COHORT_x" not in df.columns.tolist()
+    assert "COHORT_y" not in df.columns.tolist()
+    # If both one, they get merged to a single one with original type
+    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="BL")].iloc[0,:]["COHORT"] == 1
+    # Different values get merged into a pipe-separated string
+    # (Val from Subject_Cohort_History is a float because not all PATNOs appear in this
+    # table, so it includes NaNs and therefore must be float)
+    assert df[(df["PATNO"]=="9995")&(df["EVENT_ID"]=="BL")].iloc[0,:]["COHORT"] == "1|2.0"
 
 def test_empty_dir(caplog, tmp_path):
     df = load_ppmi_subject_characteristics(tmp_path)
