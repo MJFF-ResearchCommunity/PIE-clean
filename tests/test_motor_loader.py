@@ -58,6 +58,16 @@ def test_load_ppmi_motor_assessments(caplog):
     assert pat[pat["EVENT_ID"]=="BL"]["NP2EAT"].iloc[0] == 0
     assert pat[pat["EVENT_ID"]=="V04"]["NP2EAT"].iloc[0] == 1
 
+    # Ensure columns have been deduplicated correctly. NUPSOURC appears in all UPDRS tables
+    assert "NUPSOURC" in df.columns.tolist()
+    assert "NUPSOURC_x" not in df.columns.tolist()
+    assert "NUPSOURC_y" not in df.columns.tolist()
+    # All ones get merged to a single one, with the original type
+    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="BL")].iloc[0,:]["NUPSOURC"] == 1
+    # Different values get merged into a pipe-separated string
+    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="V04")].iloc[0,:]["NUPSOURC"] == "1|2"
+    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="V06")].iloc[0,:]["NUPSOURC"] == "1|2|3"
+
 def test_empty_dir(caplog, tmp_path):
     df = load_ppmi_motor_assessments(tmp_path)
 
@@ -65,3 +75,24 @@ def test_empty_dir(caplog, tmp_path):
     assert record.levelname == "WARNING"
     assert "No matching motor assessment CSV files" in record.message
     assert df.empty
+
+def test_missing_patno(caplog, tmp_path):
+    # Set up the empty PATNO file among others
+    testfile = "MDS-UPDRS_Part_I_Patient_Questionnaire"
+    shutil.copytree(f"{DATA_DIR}/{SUB_DIR}", tmp_path / SUB_DIR, dirs_exist_ok=True)
+    file = tmp_path / SUB_DIR / f"{testfile}_21Test2025.csv"
+    tmp = pd.read_csv(file)
+    tmp = tmp.drop(columns="PATNO")
+    tmp.to_csv(file, index=False)
+
+    df = load_ppmi_motor_assessments(tmp_path)
+
+    records = [r for r in caplog.records if testfile in r.message]
+    assert len(records) == 2, f"Should be 2 log records for {testfile}: found {len(records)}"
+
+    assert "Loading motor assessment file" in records[0].message # normal loading msg
+    assert records[1].levelname == "WARNING"
+    assert "missing PATNO column, skipping" in records[1].message
+
+    # And the output shouldn't contain NP1SLPD
+    assert "NP1SLPD" not in df.columns.tolist()

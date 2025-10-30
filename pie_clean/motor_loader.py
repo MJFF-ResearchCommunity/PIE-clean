@@ -210,9 +210,7 @@ def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
             logger.debug(f"No CSV file found for prefix: {prefix} in {folder_path}")
             continue
 
-        print(matching_files)
         for csv_file_path in matching_files:
-            print(f"********* in for with {csv_file_path} *********")
             try:
                 logger.debug(f"Loading motor assessment file: {csv_file_path}")
                 df_temp = pd.read_csv(csv_file_path, low_memory=False)
