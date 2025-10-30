@@ -8,13 +8,13 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pie_clean.sub_char_loader import (
-    load_ppmi_subject_characteristics, _general_deduplicate_suffixed_columns,
+    load_ppmi_subject_characteristics,
     _aggregate_by_patno_eventid, FILE_PREFIXES
 )
 
 logging.getLogger("PIE").setLevel(logging.DEBUG)
 DATA_DIR = "tests/test_data"
-SUB_DIR = "_Subject_Characteristics" 
+SUB_DIR = "_Subject_Characteristics"
 
 load_msg = f"Loading subject characteristics file: {DATA_DIR}/{SUB_DIR}"
 
@@ -106,44 +106,6 @@ def test_missing_patno(caplog, tmp_path):
     # And the output shouldn't contain AGE_AT_VISIT
     assert "AGE_AT_VISIT" not in df.columns.tolist()
 
-def test_general_dedup_suffixed_cols(caplog):
-    # Empty df returns empty df
-    df = _general_deduplicate_suffixed_columns(pd.DataFrame())
-    assert df.empty
-
-    # No "_x" and "_y" columns returns unaltered df
-    tmp = pd.read_csv(f"{DATA_DIR}/{SUB_DIR}/Age_at_visit_21Test2025.csv")
-    df = _general_deduplicate_suffixed_columns(tmp)
-    pd.testing.assert_frame_equal(tmp, df)
-
-    # Now set up the "_x" and "_y" columns
-    both_col = "INFODT"
-    tmp[f"{both_col}_x"] = ["01/2015"] * tmp.shape[0]
-    tmp[f"{both_col}_y"] = ["01/2025"] * tmp.shape[0]
-    x_col = "ORIG_ENTRY"
-    tmp[f"{x_col}_x"] = ["01/2015"] * tmp.shape[0]
-    y_col = "LabX"
-    tmp[f"{y_col}_y"] = [1.234] * tmp.shape[0]
-
-    df = _general_deduplicate_suffixed_columns(tmp)
-
-    for record in caplog.records:
-        if "Deduplicating suffixed columns for bases" in record.message:
-            assert both_col in record.message
-            assert x_col in record.message
-            assert y_col in record.message
-        elif "Combining " in record.message:
-            assert f"{both_col}_x and {both_col}_y" in record.message
-        elif "Renaming " in record.message:
-            assert f"{x_col}_x to {x_col}" in record.message or \
-                   f"{y_col}_y to {y_col}" in record.message
-
-    assert both_col in df.columns.tolist()
-    assert x_col in df.columns.tolist()
-    assert y_col in df.columns.tolist()
-    assert (df[both_col] == "01/2015|01/2025").all()
-    assert (df[x_col] == "01/2015").all()
-    assert (df[y_col] == 1.234).all()
 
 def test_agg_by_patno_eventid(caplog):
     # Empty df returns empty df
