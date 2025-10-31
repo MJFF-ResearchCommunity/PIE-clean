@@ -20,28 +20,6 @@ FILE_PREFIXES = [
     "Participant_Motor_Function"
 ]
 
-def _sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
-    """
-    Rename columns in df if they already end with '_x' or '_y',
-    so that Pandas won't clash when merging with suffixes=('_x', '_y').
-    Example: 'COL_x' -> 'COL_x_orig'.
-    """
-    rename_map = {}
-    for col in df.columns:
-        if col.endswith("_x") or col.endswith("_y"):
-            base = col[:-2]
-            new_col_candidate = f"{base}_{col[-1]}_orig" # e.g. SOME_COL_x_orig
-            # Ensure new_col_candidate is unique
-            count = 0
-            new_col = new_col_candidate
-            while new_col in df.columns or new_col in rename_map.values():
-                count += 1
-                new_col = f"{new_col_candidate}{count}"
-            rename_map[col] = new_col
-    if rename_map:
-        df.rename(columns=rename_map, inplace=True)
-        logger.debug(f"Sanitized existing suffixed columns: {rename_map}")
-
 def load_ppmi_motor_assessments(folder_path: str) -> pd.DataFrame:
     """
     Loads and merges CSV files for motor assessments.
