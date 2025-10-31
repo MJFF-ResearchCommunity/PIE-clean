@@ -37,6 +37,16 @@ def test_load_ppmi_motor_assessments(caplog):
         elif "Part_II_Patient" in record.message:
             # One and only one message, for loading
             assert f"{load_msg}/MDS-UPDRS_Part_II_Patient" in record.message
+        elif "Neuro_QoL" in record.message:
+            # Load only the Motor versions of Neuro_QoL, not the Non-motor versions
+            assert f"{load_msg}/Neuro_QoL__Lower_Extremity" in record.message or\
+                   f"Neuro_QoL__Upper_Extremity" in record.message
+            # We've mocked up Lower_Extremity, so it must be actually loaded
+            assert f"{load_msg}/Neuro_QoL__Lower_Extremity" in caplog.text
+            assert "Upper_Extremity" in caplog.text # Not mocked, so not actually loaded
+            # And we must not see the Non-motor file
+            assert "Neuro_QoL__Cognition_Function" not in caplog.text,\
+                   "Motor loader is incorrectly loading Non-motor Neuro_QoL"
 
     # We expect to see something from every table merged together in the output
     assert "PATNO" in df.columns
