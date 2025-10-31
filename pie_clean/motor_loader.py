@@ -16,7 +16,8 @@ FILE_PREFIXES = [
     "Gait_Substudy_Gait_Mobility_Assessment",
     "MDS-UPDRS_Part_I", # Picks up Parts I, II, III, IV, and _Patient versions
     "Modified_Schwab",
-    "Neuro_QoL", # Note: Neuro_QoL also appears in Non-motor. Prefixes will ensure correct loading.
+    "Neuro_QoL__Lower_Extremity", # Note: Neuro_QoL also appears in Non-motor. Need to be specific
+    "Neuro_QoL__Upper_Extremity",
     "Participant_Motor_Function"
 ]
 
