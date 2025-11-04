@@ -86,95 +86,9 @@ from typing import Union
 import gc # <--- IMPORT GARBAGE COLLECTOR
 import psutil # Keep existing import
 
+from pie_clean.utils import aggregate_by_patno_eventid
+
 logger = logging.getLogger(f"PIE.{__name__}")
-
-# --- Add the _aggregate_by_patno_eventid helper ---
-def _aggregate_by_patno_eventid(df: pd.DataFrame, df_name_for_log: str = "Biospecimen Data") -> pd.DataFrame:
-    """
-    Ensures (PATNO, EVENT_ID) pairs are unique by grouping and aggregating.
-    For non-grouping columns, it combines unique non-null string values with a pipe.
-    If only one unique non-null value exists, it's used directly (attempting to keep original type).
-    """
-    if df.empty:
-        return df
-
-    group_cols = ["PATNO", "EVENT_ID"]
-    if not all(gc in df.columns for gc in group_cols):
-        logger.warning(f"{df_name_for_log}: Cannot aggregate by {group_cols} as one or more are missing. Returning original DataFrame.")
-        return df
-
-    # Make a copy to avoid modifying the original DataFrame and ensure PATNO is string
-    df_copy = df.copy()
-    df_copy['PATNO'] = df_copy['PATNO'].astype(str)
-
-    if not df_copy.duplicated(subset=group_cols).any():
-        return df_copy
-
-    logger.info(
-        f"{df_name_for_log}: Consolidating rows with duplicate (PATNO, EVENT_ID) pairs. "
-        "Non-null values for other columns will be pipe-separated if different."
-    )
-
-    agg_cols = [col for col in df.columns if col not in group_cols]
-    if not agg_cols:
-        return df_copy.drop_duplicates(subset=group_cols, keep='first')
-
-    df_indexed = df_copy.set_index(group_cols)
-
-    grouped = df_indexed.groupby(level=group_cols)
-    nunique_df = grouped[agg_cols].nunique()
-    result_df = grouped[agg_cols].first()
-
-    pipe_separated_stats = {}
-
-    for col in agg_cols:
-        multi_value_groups_mask = nunique_df[col] > 1
-        if not multi_value_groups_mask.any():
-            continue
-
-        num_affected_groups = multi_value_groups_mask.sum()
-        if num_affected_groups > 0:
-            pipe_separated_stats[col] = num_affected_groups
-
-        multi_value_group_indices = nunique_df.index[multi_value_groups_mask]
-        
-        rows_for_col_agg_mask = df_indexed.index.isin(multi_value_group_indices)
-        df_subset_for_col = df_indexed.loc[rows_for_col_agg_mask, [col]]
-
-        if df_subset_for_col.empty:
-            continue
-        
-        def string_agg_slow(series: pd.Series) -> str:
-            unique_strings = series.dropna().astype(str).unique()
-            return "|".join(sorted(unique_strings))
-
-        slow_agg_results = df_subset_for_col.groupby(level=group_cols)[col].agg(string_agg_slow)
-
-        # If the target column is not already an object/string type, cast it.
-        # This prevents FutureWarning about incompatible dtypes.
-        if result_df[col].dtype != 'object' and not pd.api.types.is_string_dtype(result_df[col].dtype):
-            result_df[col] = result_df[col].astype(object)
-
-        result_df.loc[slow_agg_results.index, col] = slow_agg_results
-        
-    df_aggregated = result_df.reset_index()
-
-    if pipe_separated_stats:
-        logger.info(f"Summary of pipe-separated columns for {df_name_for_log}:")
-        sorted_stats = sorted(pipe_separated_stats.items(), key=lambda item: item[1], reverse=True)
-        
-        for i, (col, count) in enumerate(sorted_stats):
-            logger.info(f"  - Column '{col}': {count} groups had multiple values.")
-            if i < 3: # Log examples for the top 3
-                first_offending_group_index = nunique_df.index[nunique_df[col] > 1][0]
-                conflicting_values = df_indexed.loc[first_offending_group_index, col].dropna().astype(str).unique()
-                logger.info(f"    - Example for group {first_offending_group_index}: values were {list(conflicting_values)}")
-    
-    # Preserve original column order as much as possible
-    ordered_cols = group_cols + [col for col in df.columns if col in df_aggregated.columns and col not in group_cols]
-    final_ordered_cols = [col for col in ordered_cols if col in df_aggregated.columns]
-    
-    return df_aggregated[final_ordered_cols]
 
 
 def load_project_151_pQTL_CSF(folder_path: str, batch_corrected: bool = False) -> pd.DataFrame:
@@ -1985,7 +1899,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
 
             # Aggregate duplicates within this specific source DataFrame *before* prefixing and merging globally
             # This is an important step if individual loaders don't guarantee uniqueness
-            df = _aggregate_by_patno_eventid(df, df_name_for_log=f"Source: {source_name}")
+            df = aggregate_by_patno_eventid(df, source_name)
 
             current_pairs = set(map(lambda x: (x[0], x[1]), 
                                     df[["PATNO", "EVENT_ID"]].drop_duplicates().itertuples(index=False, name=None)))
@@ -2048,7 +1962,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
         # This acts as a safeguard if the merge process itself introduced duplicates or if
         # PATNO/EVENT_ID combinations were present in all_pairs but not fully resolved.
         logger.info("Performing final aggregation on the fully merged biospecimen DataFrame...")
-        merged_df = _aggregate_by_patno_eventid(merged_df, df_name_for_log="Fully Merged Biospecimen")
+        merged_df = aggregate_by_patno_eventid(merged_df, "Fully Merged Biospecimen")
 
         logger.info(f"Final merged biospecimen DataFrame: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
         
