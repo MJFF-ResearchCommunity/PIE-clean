@@ -453,29 +453,29 @@ def load_project_9000(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("PPMI_Project_9000"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No PPMI_Project_9000 files found in {folder_path}")
         return pd.DataFrame()
-    
+
     # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
     logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
     patno_event_pairs = set()
-    
+
     # Process files one by one to avoid loading all data at once
     for file_path in matching_files:
         try:
             # Read only PATNO and EVENT_ID columns to get unique combinations
             # Specify dtype for PATNO here too
             df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"], dtype={'PATNO': 'string'}) 
-            
+
             for _, row in df_ids.iterrows():
                 # Remove "PPMI-" prefix from PATNO if it exists
                 patno = row["PATNO"]
@@ -485,82 +485,92 @@ def load_project_9000(folder_path: str) -> pd.DataFrame:
                 patno_event_pairs.add((patno, row["EVENT_ID"]))
         except Exception as e:
             logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
-    
+
     # Create a dictionary to collect all data
     # Structure: {(patno, event_id): {column_name: value}}
     data_dict = {pair: {} for pair in patno_event_pairs}
-    
+
     # Process each file separately to reduce memory usage
     for file_path in matching_files:
         try:
-            logger.info(f"Processing file: {file_path}")
-            
+            # Find the bare filename, split by '_', and ignore 'PPMI', 'Project', and '9000'
+            tissue = file_path.split("/")[-1].split("_")[3]
+            logger.info(f"Processing file: {file_path} for tissue {tissue}")
+
             # Read the file in chunks to reduce memory usage
             chunk_size = 50000
             # Use specified dtypes and low_memory=False
-            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype=dtypes, low_memory=False):
+            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype={'PATNO': 'string'}, low_memory=False):
                 # Check if required columns exist
                 required_columns = ["PATNO", "EVENT_ID", "UNIPROT", "ASSAY", "MISSINGFREQ", "LOD", "NPX"]
                 if not all(col in chunk.columns for col in required_columns):
                     missing = [col for col in required_columns if col not in chunk.columns]
                     logger.error(f"Required columns {missing} not found in {file_path}")
                     continue
-                
+
                 # Create a combined key for UNIPROT and ASSAY
-                chunk["UNIPROT_ASSAY"] = chunk["UNIPROT"] + "_" + chunk["ASSAY"]
-                
+                chunk["UNIPROT_ASSAY"] = chunk.apply(
+                        lambda row: f"{tissue}_{row['UNIPROT']}_{row['ASSAY']}", axis=1)
+
                 # Process each row efficiently
                 for _, row in chunk.iterrows():
                     # Remove "PPMI-" prefix from PATNO if it exists
                     patno = row["PATNO"]
                     if isinstance(patno, str) and patno.startswith("PPMI-"):
                         patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
+
                     event_id = row["EVENT_ID"]
                     key = (patno, event_id)
-                    
+
                     # Skip if this PATNO/EVENT_ID combination wasn't in our original set
                     if key not in data_dict:
                         continue
-                    
+
                     ua = row["UNIPROT_ASSAY"]
-                    
+
                     # Add each metric to the dictionary
                     for metric in ["MISSINGFREQ", "LOD", "NPX"]:
                         col_name = f"9000_{ua}_{metric}"
-                        
+
                         # Only update if we don't have a value yet or if the current value is not NaN
                         # and the existing one is NaN
                         if (col_name not in data_dict[key] or 
                             (pd.notna(row[metric]) and pd.isna(data_dict[key].get(col_name)))):
                             data_dict[key][col_name] = row[metric]
-                
+
                 logger.info(f"Processed chunk with {len(chunk)} rows")
-                
+
                 # Explicitly delete chunk after processing
                 del chunk
                 gc.collect() # Collect garbage after each chunk
-            
+
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
-    
+
     # Convert the dictionary to a DataFrame efficiently
     logger.info("Converting collected data to DataFrame")
-    
+
     # Create a list of dictionaries, each representing a row
     rows = []
     for (patno, event_id), values in data_dict.items():
         row_dict = {"PATNO": patno, "EVENT_ID": event_id}
         row_dict.update(values)
         rows.append(row_dict)
-    
+
     # Create DataFrame from the list of dictionaries (much more efficient than adding columns one by one)
     result_df = pd.DataFrame(rows)
+
+    # Check if required columns exist (different from the required loading columns above)
+    required_columns = ["PATNO", "EVENT_ID"]
+    for col in required_columns:
+        if col not in result_df.columns:
+            logger.error(f"Required column {col} not found in the data")
+            return pd.DataFrame()
     
     # Explicit garbage collection before returning
     del data_dict # Delete the large intermediate dict
     gc.collect()
-    
+
     logger.info(f"Successfully processed Project 9000 data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
 
