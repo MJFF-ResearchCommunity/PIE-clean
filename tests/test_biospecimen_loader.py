@@ -94,10 +94,11 @@ def test_load_metabolomic_lrrk2(caplog, tmp_path):
     # Logging shows that the files were found correctly
     assert "Successfully processed Metabolomic" in caplog.records[-1].message
     # Logging shows more rows and more columns
-    assert "4 rows, 9 columns" in caplog.records[-1].message
+    assert "4 rows, 10 columns" in caplog.records[-1].message
     assert df.shape[0] == 4 # ...and the output matches the logging
-    # Now the CSF tests are included
-    assert "LRRK2_(3-O-sulfo)GalCer(d18:1/16:0)" in df.columns.tolist()
+    # Now the CSF tests are included, and duplicate TESTNAMEs have UNITs appended
+    assert "LRRK2_(3-O-sulfo)GalCer(d18:1/16:0)_adjusted_area_ratio" in df.columns.tolist()
+    assert "LRRK2_(3-O-sulfo)GalCer(d18:1/16:0)_area_ratio" in df.columns.tolist()
     # And we have V06 events as well as the original V04s
     assert "V04" in df["EVENT_ID"].tolist()
     assert "V06" in df["EVENT_ID"].tolist()
@@ -278,7 +279,7 @@ def test_load_project_196(caplog, tmp_path):
     assert df.empty
 
 def test_load_project_177(caplog, tmp_path):
-    # Defaults to batch_corrected=False
+    # Normal loading
     df = load_project_177_untargeted_proteomics(f"{DATA_DIR}/{SUB_DIR}")
     # Logging shows that the files were found correctly
     assert "Successfully processed Project 177" in caplog.records[-1].message
@@ -308,7 +309,7 @@ def test_load_project_177(caplog, tmp_path):
     assert df.empty
 
     # Test when required column is missing: set up missing PATNO files
-    testfile = "PPMI_Project_1777_Untargeted_Proteomics_21TestOct.csv"
+    testfile = "PPMI_Project_177_Untargeted_Proteomics_21TestOct.csv"
     shutil.copytree(f"{DATA_DIR}/{SUB_DIR}", tmp_path / SUB_DIR, dirs_exist_ok=True)
     file = tmp_path / SUB_DIR / testfile
     tmp = pd.read_csv(file)
@@ -320,4 +321,52 @@ def test_load_project_177(caplog, tmp_path):
     assert "Required column PATNO not found" in caplog.records[-1].message
     assert df.empty
 
+def test_load_current_biospec(caplog, tmp_path):
+    # Normal loading
+    df = load_current_biospecimen_analysis(f"{DATA_DIR}/{SUB_DIR}")
+    # Logging shows that the files were found correctly
+    assert "Successfully processed Current Biospecimen" in caplog.records[-1].message
+    # Logging shows the data was pivoted into wide format
+    assert "2 rows, 8 columns" in caplog.records[-1].message
+    assert df.shape[0] == 2 # ...and the output matches the logging
+    # PATNOs from each file have been merged together (ints here)
+    assert 9999 in df["PATNO"].tolist()
+    assert 9998 in df["PATNO"].tolist()
+    # Test IDs have become column names, with "BIO_" prepended
+    assert "BIO_SNCA_multiplication" in df.columns.tolist()
+    # Different capitalizations of Genotype have been harmonized
+    assert "Found inconsistent capitalization" in caplog.text
+    assert "BIO_APOE GENOTYPE" in df.columns.tolist()
+    assert "BIO_ApoE Genotype" not in df.columns.tolist()
+    # The same TESTNAME has been distinguished by appending UNITs
+    assert "BIO_APP_Avg CT" in df.columns.tolist()
+    assert "BIO_APP_SD" in df.columns.tolist()
+    # Others have been dropped
+    assert "PLATEID" not in df.columns.tolist()
+    # But SEX was kept
+    assert "SEX" in df.columns.tolist()
+    # CLINICAL_EVENT has been renamed to EVENT_ID
+    assert "CLINICAL_EVENT" not in df.columns.tolist()
+    assert "EVENT_ID" in df.columns.tolist()
+    assert df["EVENT_ID"].iloc[0] == "SC"
+    # And data is complete
+    assert not df.isnull().any().any()
 
+    # Test when the directory is empty
+    df = load_current_biospecimen_analysis(tmp_path)
+    assert caplog.records[-1].levelname == "WARNING"
+    assert "No Current_Biospecimen_Analysis_Results files" in caplog.records[-1].message
+    assert df.empty
+
+    # Test when required column is missing: set up missing PATNO files
+    testfile = "Current_Biospecimen_Analysis_Results_21Test2025.csv"
+    shutil.copytree(f"{DATA_DIR}/{SUB_DIR}", tmp_path / SUB_DIR, dirs_exist_ok=True)
+    file = tmp_path / SUB_DIR / testfile
+    tmp = pd.read_csv(file)
+    tmp = tmp.drop(columns="PATNO")
+    tmp.to_csv(file, index=False)
+
+    df = load_current_biospecimen_analysis(tmp_path)
+    assert caplog.records[-1].levelname == "ERROR"
+    assert "Required column PATNO not found" in caplog.records[-1].message
+    assert df.empty

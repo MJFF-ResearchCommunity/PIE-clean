@@ -91,68 +91,82 @@ from pie_clean.utils import aggregate_by_patno_eventid
 logger = logging.getLogger(f"PIE.{__name__}")
 
 
-def _process_test_file(matching_files, project_name):
+def _process_test_file(matching_files, project_name, col_prefix):
     # Load and combine all matching files
     dfs = []
     for file_path in matching_files:
         try:
             logger.info(f"Loading file: {file_path}")
             df = pd.read_csv(file_path)
-            
+
             # Rename CLINICAL_EVENT to EVENT_ID if it exists
             if "CLINICAL_EVENT" in df.columns:
                 df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
+
             dfs.append(df)
         except Exception as e:
             logger.error(f"Error loading file {file_path}: {e}")
-    
+
     if not dfs:
         logger.warning("No files were successfully loaded")
         return pd.DataFrame()
-    
+
     # Combine all dataframes
     combined_df = pd.concat(dfs, ignore_index=True)
-    
+
     # Check if required columns exist
     required_columns = ["PATNO", "TESTNAME", "TESTVALUE"]
     for col in required_columns:
         if col not in combined_df.columns:
             logger.error(f"Required column {col} not found in the {project_name} data")
             return pd.DataFrame()
-    
-    # Keep only the columns we need
-    keep_columns = ["PATNO", "EVENT_ID", "SEX", "COHORT", "TESTNAME", "TESTVALUE"]
+
+    # Keep only the columns we need (UNITS is temporary)
+    keep_columns = ["PATNO", "EVENT_ID", "SEX", "COHORT", "TESTNAME", "TESTVALUE", "UNITS"]
     keep_columns = [col for col in keep_columns if col in combined_df.columns]
     combined_df = combined_df[keep_columns]
-    
+
     # Pivot the data to create columns for each TESTNAME
     try:
-        # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME
-        # If there are duplicates, keep the first occurrence
+        # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME.
+        # Occasionally, the same test will be inconsistently capitalized
+        uppers = [test.upper() for test in combined_df["TESTNAME"].unique()]
+        case_dups = set([test for test in uppers if uppers.count(test) > 1])
+        if len(case_dups) > 0:
+            logger.info(f"Found inconsistent capitalization for columns {list(case_dups)}")
+            combined_df["TESTNAME"] = combined_df["TESTNAME"].apply(
+                    lambda tn: tn.upper() if tn.upper() in case_dups else tn)
+        # If there are still duplicates, append the units
+        dup_rows = combined_df.duplicated(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep=False)
+        combined_df["TESTNAME"] = combined_df.apply(lambda row:
+                f"{row['TESTNAME']}_{row['UNITS']}" if dup_rows[row.name] \
+                                                    else row["TESTNAME"], axis=1)
+        # If there are STILL duplicates, keep the first occurrence
         combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
-        
+        # Now drop the UNITS column
+        combined_df = combined_df.drop(columns="UNITS")
+
         # Pivot the data
         pivot_columns = ["PATNO", "EVENT_ID"]
         if "SEX" in combined_df.columns:
             pivot_columns.append("SEX")
         if "COHORT" in combined_df.columns:
             pivot_columns.append("COHORT")
-        
+
         pivoted_df = combined_df.pivot_table(
             index=pivot_columns,
             columns="TESTNAME",
             values="TESTVALUE",
             aggfunc="first"  # In case there are still duplicates
         ).reset_index()
-        
+
         # Rename columns to add project-specific prefix to TESTNAME columns
         # First, get the names of columns that were created from TESTNAME
         testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
-        # Create a dictionary for renaming (take the last element of project name)
-        rename_dict = {col: f"{project_name.split('_')[-1]}_{col}" for col in testname_columns}
-        
+
+        # Create a dictionary for renaming
+        rename_dict = {col: f"{col_prefix}_{col}" for col in testname_columns}
+
         # Rename the columns
         pivoted_df = pivoted_df.rename(columns=rename_dict)
         return pivoted_df
@@ -312,7 +326,7 @@ def load_project_151_pQTL_CSF(folder_path: str, batch_corrected: bool = False) -
         logger.warning(f"No {batch_type} Project_151_pQTL_in_CSF files found in {folder_path}")
         return pd.DataFrame()
 
-    result_df = _process_test_file(matching_files, "Project_151")
+    result_df = _process_test_file(matching_files, "Project_151", "151")
     if not result_df.empty:
         logger.info(f"Successfully processed Project_151_pQTL_in_CSF data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
@@ -362,7 +376,7 @@ def load_metabolomic_lrrk2(folder_path: str, include_csf: bool = True) -> pd.Dat
         logger.warning(f"No Metabolomic_Analysis_of_LRRK2 files found in {folder_path} ({csf_status})")
         return pd.DataFrame()
 
-    result_df = _process_test_file(matching_files, "Metabolomic_Analysis_of_LRRK2")
+    result_df = _process_test_file(matching_files, "Metabolomic_Analysis_of_LRRK2", "LRRK2")
     if not result_df.empty:
         logger.info(f"Successfully processed Metabolomic_Analysis_of_LRRK2 data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
@@ -764,7 +778,7 @@ def load_project_177_untargeted_proteomics(folder_path: str) -> pd.DataFrame:
         logger.warning(f"No PPMI_Project_177 files found in {folder_path}")
         return pd.DataFrame()
 
-    result_df = _process_test_file(matching_files, "Project_177")
+    result_df = _process_test_file(matching_files, "Project_177", "177")
     if not result_df.empty:
         logger.info(f"Successfully processed Project 177 data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
@@ -950,81 +964,22 @@ def load_current_biospecimen_analysis(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("Current_Biospecimen_Analysis_Results"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No Current_Biospecimen_Analysis_Results files found in {folder_path}")
         return pd.DataFrame()
-    
-    # Load and combine all matching files
-    dfs = []
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-            
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
-            dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
-    
-    if not dfs:
-        logger.warning("No files were successfully loaded")
-        return pd.DataFrame()
-    
-    # Combine all dataframes
-    combined_df = pd.concat(dfs, ignore_index=True)
-    
-    # Check if required columns exist
-    required_columns = ["PATNO", "EVENT_ID", "TESTNAME", "TESTVALUE"]
-    for col in required_columns:
-        if col not in combined_df.columns:
-            logger.error(f"Required column {col} not found in the data")
-            return pd.DataFrame()
-    
-    try:
-        # Determine which columns to keep for the pivot
-        pivot_columns = ["PATNO", "EVENT_ID"]
-        if "SEX" in combined_df.columns:
-            pivot_columns.append("SEX")
-        if "COHORT" in combined_df.columns:
-            pivot_columns.append("COHORT")
-        
-        # Pivot the data to create columns for each TESTNAME
-        pivoted_df = pd.pivot_table(
-            combined_df,
-            index=pivot_columns,
-            columns="TESTNAME",
-            values="TESTVALUE",
-            aggfunc="first"  # In case there are duplicates
-        ).reset_index()
-        
-        # Rename columns to add "BIO_" prefix to TESTNAME columns
-        # First, get the names of columns that were created from TESTNAME
-        testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
-        # Create a dictionary for renaming
-        rename_dict = {col: f"BIO_{col}" for col in testname_columns}
-        
-        # Rename the columns
-        pivoted_df = pivoted_df.rename(columns=rename_dict)
-        
-        logger.info(f"Successfully processed Current Biospecimen Analysis data: {len(pivoted_df)} rows, {len(pivoted_df.columns)} columns")
-        return pivoted_df
-        
-    except Exception as e:
-        logger.error(f"Error pivoting data: {e}")
-        return pd.DataFrame()
 
+    result_df = _process_test_file(matching_files, "Current_Biospecimen_Analysis", "BIO")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Current Biospecimen Analysis data: {len(result_df)} rows, {len(result_df.columns)} columns")
+    return result_df
 
 def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
     """
