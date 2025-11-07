@@ -984,7 +984,7 @@ def load_current_biospecimen_analysis(folder_path: str) -> pd.DataFrame:
 def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
     """
     Load and process Blood_Chemistry___Hematology data files.
-    
+
     This function:
     1. Finds all files with the prefix "Blood_Chemistry___Hematology"
     2. For each unique LTSTCODE-LTSTNAME combination, creates three columns:
@@ -995,10 +995,10 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
     4. Replaces spaces with underscores in the column names
     5. Keeps only PATNO, EVENT_ID, and the newly created columns
     6. Removes "PPMI-" prefix from PATNO values if present
-    
+
     Args:
         folder_path: Path to the Biospecimen folder containing the CSV files
-    
+
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test metric
     """
@@ -1008,47 +1008,47 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("Blood_Chemistry___Hematology"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No Blood_Chemistry___Hematology files found in {folder_path}")
         return pd.DataFrame()
-    
+
     # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
     logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
     patno_event_pairs = set()
-    
+
     # Process files one by one to avoid loading all data at once
     for file_path in matching_files:
         try:
             # Read only PATNO and EVENT_ID columns to get unique combinations
             df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"])
-            
+
             for _, row in df_ids.iterrows():
                 # Remove "PPMI-" prefix from PATNO if it exists
                 patno = row["PATNO"]
                 if isinstance(patno, str) and patno.startswith("PPMI-"):
                     patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                
+
                 patno_event_pairs.add((patno, row["EVENT_ID"]))
         except Exception as e:
             logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
-    
+
     # Create a dictionary to collect all data
     # Structure: {(patno, event_id): {column_name: value}}
     data_dict = {pair: {} for pair in patno_event_pairs}
-    
+
     # Process each file separately to reduce memory usage
     for file_path in matching_files:
         try:
             logger.info(f"Processing file: {file_path}")
-            
+
             # Read the file in chunks to reduce memory usage
             chunk_size = 50000  # Increased chunk size for better performance
             for chunk in pd.read_csv(file_path, chunksize=chunk_size):
@@ -1058,27 +1058,27 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
                     missing = [col for col in required_columns if col not in chunk.columns]
                     logger.error(f"Required columns {missing} not found in {file_path}")
                     continue
-                
+
                 # Process each row efficiently
                 for _, row in chunk.iterrows():
                     # Remove "PPMI-" prefix from PATNO if it exists
                     patno = row["PATNO"]
                     if isinstance(patno, str) and patno.startswith("PPMI-"):
                         patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
+
                     event_id = row["EVENT_ID"]
                     key = (patno, event_id)
-                    
+
                     # Skip if this PATNO/EVENT_ID combination wasn't in our original set
                     if key not in data_dict:
                         continue
-                    
+
                     # Create a combined key for LTSTCODE and LTSTNAME
                     # Replace spaces with underscores
                     test_code = str(row["LTSTCODE"]).strip()
                     test_name = str(row["LTSTNAME"]).strip().replace(" ", "_")
                     combined_name = f"{test_code}_{test_name}"
-                    
+
                     # Add each metric to the dictionary
                     for metric, column in [
                         ("LSIRES", "LSIRES"), 
@@ -1086,40 +1086,41 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
                         ("LSIHIRNG", "LSIHIRNG")
                     ]:
                         col_name = f"BCH_{combined_name}_{metric}"
-                        
+
                         # Only update if we don't have a value yet or if the current value is not NaN
                         # and the existing one is NaN
                         if (col_name not in data_dict[key] or
                             (pd.notna(row[column]) and pd.isna(data_dict[key].get(col_name)))):
                             data_dict[key][col_name] = row[column]
-                
+
                 logger.info(f"Processed chunk with {len(chunk)} rows")
-                
+
                 # Explicitly delete chunk after processing
                 del chunk
                 gc.collect() # Collect garbage after each chunk
-            
+
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
-    
+
     # Convert the dictionary to a DataFrame efficiently
     logger.info("Converting collected data to DataFrame")
-    
+
     # Create a list of dictionaries, each representing a row
     rows = []
     for (patno, event_id), values in data_dict.items():
         row_dict = {"PATNO": patno, "EVENT_ID": event_id}
         row_dict.update(values)
         rows.append(row_dict)
-    
-    # Create DataFrame from the list of dictionaries
-    result_df = pd.DataFrame(rows)
-    
+
     # Explicit garbage collection before returning
     del data_dict # Delete the large intermediate dict
     gc.collect()
-    
-    logger.info(f"Successfully processed Blood Chemistry & Hematology data: {len(result_df)} rows, {len(result_df.columns)} columns")
+
+    # Create DataFrame from the list of dictionaries
+    result_df = pd.DataFrame(rows)
+
+    if not result_df.empty:
+        logger.info(f"Successfully processed Blood Chemistry & Hematology data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
 
 
@@ -1310,7 +1311,7 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
         return result_df
 
 
-def load_biospecimen_data(data_path: str, source: str, exclude: list = None) -> dict:
+def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = None) -> dict:
     """
     Load biospecimen data from the specified path.
     
@@ -1324,7 +1325,7 @@ def load_biospecimen_data(data_path: str, source: str, exclude: list = None) -> 
     """
     # Initialize exclude if None
     if exclude is None:
-        exclude = []
+        exclude = ["standard_files"] # Default to ignoring technical parameters
     
     if exclude:
         logger.info(f"Will exclude the following projects: {exclude}")
@@ -1495,10 +1496,12 @@ def load_biospecimen_data(data_path: str, source: str, exclude: list = None) -> 
         logger.info("Skipping Blood Chemistry & Hematology (excluded)")
     
     # Load files that don't require individual processing
+    # These files generally record technical parameters about testing, such as
+    # volume of blood collected, hours of fasting, etc, rather than results.
     if "standard_files" not in exclude:
         try:
             standard_file_prefixes = [
-                "Clinical_Labs",
+                "Clinical_Labs", # Just a record of when labs were taken: no data
                 "Genetic_Testing_Results",
                 "Skin_Biopsy",
                 "Research_Biospecimens",
@@ -1541,10 +1544,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
         If merge_all is True: A single DataFrame with all biospecimen data merged on PATNO and EVENT_ID
         If merge_all is False: The original dictionary of DataFrames with potential file saving
     """
-    # Import only when needed for memory tracking
-    # import psutil # Already imported at module level if needed elsewhere, or can be local
-    # import gc # Already imported at module level
-    
+
     # Initialize include/exclude to empty lists if None
     if include is None:
         include = []
@@ -1623,7 +1623,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
             # Prefix columns other than PATNO, EVENT_ID
             # This happens *after* internal aggregation for the source
             rename_dict = {
-                col: f"{source_name}_{col}" 
+                col: f"{source_name}_{col}"
                 for col in df.columns if col not in ["PATNO", "EVENT_ID"]
             }
             df.rename(columns=rename_dict, inplace=True)
