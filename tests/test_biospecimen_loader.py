@@ -56,7 +56,7 @@ def test_load_biospecimen(caplog, tmp_path):
     assert "Biospecimen directory not found" in caplog.records[-1].message
     assert data == {}
 
-def test_merge_biospecimen(caplog, tmp_path):
+def test_merge_biospecimen(caplog, tmp_path, tmpdir):
     # Test out the handling of function parameters. The actual content of the
     # return data is tested in the project-specific individual tests below.
     pat_list = ["9999", "9999", "9998", "9998"]
@@ -91,7 +91,44 @@ def test_merge_biospecimen(caplog, tmp_path):
     assert "project_222_222_col" in df.columns.tolist()
     assert "project_196_196_col" in df.columns.tolist()
 
-    # TODO: Test merge_all=False, and test the file outputting
+    # Don't merge, and include everything
+    data = merge_biospecimen_data(test_dict, merge_all=False)
+    assert isinstance(data, dict)
+    assert data == test_dict # Data is passed right through
+
+    # Don't merge, and explicitly include one dataset
+    data = merge_biospecimen_data(test_dict, merge_all=False, include=["project_9000"])
+    assert isinstance(data, dict)
+    assert "project_9000" in data
+    assert "project_222" not in data
+    assert "project_196" not in data
+
+    # Don't merge, and explicitly exclude one dataset
+    data = merge_biospecimen_data(test_dict, merge_all=False, exclude=["project_9000"])
+    assert isinstance(data, dict)
+    assert "project_9000" not in data
+    assert "project_222" in data
+    assert "project_196" in data
+
+    # None of these calls should have written to file, as output_dir defaults to None
+    for file in os.listdir("."):
+        assert "biospecimen.csv" not in file
+    # Now explicitly write to file, when merging data. Use default filename.
+    df = merge_biospecimen_data(test_dict, output_dir=tmpdir)
+    assert os.path.isfile(f"{tmpdir}/biospecimen.csv")
+    # Merge and specify filename
+    df = merge_biospecimen_data(test_dict, output_dir=tmpdir, output_filename="test.csv")
+    assert os.path.isfile(f"{tmpdir}/test.csv")
+    # Don't merge: creates an extra dir, and keys are filenames
+    df = merge_biospecimen_data(test_dict, merge_all=False, output_dir=tmpdir)
+    assert os.path.isfile(f"{tmpdir}/individual_biospecimen/project_9000.csv")
+    assert os.path.isfile(f"{tmpdir}/individual_biospecimen/project_222.csv")
+    assert os.path.isfile(f"{tmpdir}/individual_biospecimen/project_196.csv")
+    # output_filename has no effect when not merging
+    df = merge_biospecimen_data(test_dict, merge_all=False, output_dir=tmpdir, output_filename="test.csv")
+    assert os.path.isfile(f"{tmpdir}/individual_biospecimen/project_9000.csv")
+    assert os.path.isfile(f"{tmpdir}/individual_biospecimen/project_222.csv")
+    assert os.path.isfile(f"{tmpdir}/individual_biospecimen/project_196.csv")
 
 def test_load_project_151(caplog, tmp_path):
     # Defaults to batch_corrected=False
