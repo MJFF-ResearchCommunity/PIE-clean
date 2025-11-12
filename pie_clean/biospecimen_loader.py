@@ -86,101 +86,209 @@ from typing import Union
 import gc # <--- IMPORT GARBAGE COLLECTOR
 import psutil # Keep existing import
 
+from pie_clean.utils import aggregate_by_patno_eventid
+
 logger = logging.getLogger(f"PIE.{__name__}")
 
-# --- Add the _aggregate_by_patno_eventid helper ---
-def _aggregate_by_patno_eventid(df: pd.DataFrame, df_name_for_log: str = "Biospecimen Data") -> pd.DataFrame:
-    """
-    Ensures (PATNO, EVENT_ID) pairs are unique by grouping and aggregating.
-    For non-grouping columns, it combines unique non-null string values with a pipe.
-    If only one unique non-null value exists, it's used directly (attempting to keep original type).
-    """
-    if df.empty:
-        return df
 
-    group_cols = ["PATNO", "EVENT_ID"]
-    if not all(gc in df.columns for gc in group_cols):
-        logger.warning(f"{df_name_for_log}: Cannot aggregate by {group_cols} as one or more are missing. Returning original DataFrame.")
-        return df
+def _process_test_file(matching_files, project_name, col_prefix):
+    # Load and combine all matching files
+    dfs = []
+    for file_path in matching_files:
+        try:
+            logger.info(f"Loading file: {file_path}")
+            df = pd.read_csv(file_path)
 
-    # Make a copy to avoid modifying the original DataFrame and ensure PATNO is string
-    df_copy = df.copy()
-    df_copy['PATNO'] = df_copy['PATNO'].astype(str)
+            # Rename CLINICAL_EVENT to EVENT_ID if it exists
+            if "CLINICAL_EVENT" in df.columns:
+                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
 
-    if not df_copy.duplicated(subset=group_cols).any():
-        return df_copy
+            dfs.append(df)
+        except Exception as e:
+            logger.error(f"Error loading file {file_path}: {e}")
 
-    logger.info(
-        f"{df_name_for_log}: Consolidating rows with duplicate (PATNO, EVENT_ID) pairs. "
-        "Non-null values for other columns will be pipe-separated if different."
-    )
+    if not dfs:
+        logger.warning("No files were successfully loaded")
+        return pd.DataFrame()
 
-    agg_cols = [col for col in df.columns if col not in group_cols]
-    if not agg_cols:
-        return df_copy.drop_duplicates(subset=group_cols, keep='first')
+    # Combine all dataframes
+    combined_df = pd.concat(dfs, ignore_index=True)
 
-    df_indexed = df_copy.set_index(group_cols)
+    # Check if required columns exist
+    required_columns = ["PATNO", "TESTNAME", "TESTVALUE"]
+    for col in required_columns:
+        if col not in combined_df.columns:
+            logger.error(f"Required column {col} not found in the {project_name} data")
+            return pd.DataFrame()
 
-    grouped = df_indexed.groupby(level=group_cols)
-    nunique_df = grouped[agg_cols].nunique()
-    result_df = grouped[agg_cols].first()
+    # Keep only the columns we need (UNITS is temporary)
+    keep_columns = ["PATNO", "EVENT_ID", "SEX", "COHORT", "TESTNAME", "TESTVALUE", "UNITS"]
+    keep_columns = [col for col in keep_columns if col in combined_df.columns]
+    combined_df = combined_df[keep_columns]
 
-    pipe_separated_stats = {}
+    # Pivot the data to create columns for each TESTNAME
+    try:
+        # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME.
+        # Occasionally, the same test will be inconsistently capitalized
+        uppers = [test.upper() for test in combined_df["TESTNAME"].unique()]
+        case_dups = set([test for test in uppers if uppers.count(test) > 1])
+        if len(case_dups) > 0:
+            logger.info(f"Found inconsistent capitalization for columns {list(case_dups)}")
+            combined_df["TESTNAME"] = combined_df["TESTNAME"].apply(
+                    lambda tn: tn.upper() if tn.upper() in case_dups else tn)
+        # If there are still duplicates, append the units
+        dup_rows = combined_df.duplicated(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep=False)
+        combined_df["TESTNAME"] = combined_df.apply(lambda row:
+                f"{row['TESTNAME']}_{row['UNITS']}" if dup_rows[row.name] \
+                                                    else row["TESTNAME"], axis=1)
+        # If there are STILL duplicates, keep the first occurrence
+        combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
+        # Now drop the UNITS column
+        combined_df = combined_df.drop(columns="UNITS")
 
-    for col in agg_cols:
-        multi_value_groups_mask = nunique_df[col] > 1
-        if not multi_value_groups_mask.any():
-            continue
+        # Pivot the data
+        pivot_columns = ["PATNO", "EVENT_ID"]
+        if "SEX" in combined_df.columns:
+            pivot_columns.append("SEX")
+        if "COHORT" in combined_df.columns:
+            pivot_columns.append("COHORT")
 
-        num_affected_groups = multi_value_groups_mask.sum()
-        if num_affected_groups > 0:
-            pipe_separated_stats[col] = num_affected_groups
+        pivoted_df = combined_df.pivot_table(
+            index=pivot_columns,
+            columns="TESTNAME",
+            values="TESTVALUE",
+            aggfunc="first"  # In case there are still duplicates
+        ).reset_index()
 
-        multi_value_group_indices = nunique_df.index[multi_value_groups_mask]
-        
-        rows_for_col_agg_mask = df_indexed.index.isin(multi_value_group_indices)
-        df_subset_for_col = df_indexed.loc[rows_for_col_agg_mask, [col]]
+        # Rename columns to add project-specific prefix to TESTNAME columns
+        # First, get the names of columns that were created from TESTNAME
+        testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
 
-        if df_subset_for_col.empty:
-            continue
-        
-        def string_agg_slow(series: pd.Series) -> str:
-            unique_strings = series.dropna().astype(str).unique()
-            return "|".join(sorted(unique_strings))
+        # Create a dictionary for renaming
+        rename_dict = {col: f"{col_prefix}_{col}" for col in testname_columns}
 
-        slow_agg_results = df_subset_for_col.groupby(level=group_cols)[col].agg(string_agg_slow)
+        # Rename the columns
+        pivoted_df = pivoted_df.rename(columns=rename_dict)
+        return pivoted_df
+    except Exception as e:
+        logger.error(f"Error pivoting {project_name} data: {e}")
+        return pd.DataFrame()
 
-        # If the target column is not already an object/string type, cast it.
-        # This prevents FutureWarning about incompatible dtypes.
-        if result_df[col].dtype != 'object' and not pd.api.types.is_string_dtype(result_df[col].dtype):
-            result_df[col] = result_df[col].astype(object)
+def _process_npx_files(matching_files, project_num):
+    # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
+    logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
+    patno_event_pairs = set()
 
-        result_df.loc[slow_agg_results.index, col] = slow_agg_results
-        
-    df_aggregated = result_df.reset_index()
+    # Process files one by one to avoid loading all data at once
+    for file_path in matching_files:
+        try:
+            # Read only PATNO and EVENT_ID columns to get unique combinations
+            # Specify dtype for PATNO here too
+            df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"], dtype={'PATNO': 'string'})
 
-    if pipe_separated_stats:
-        logger.info(f"Summary of pipe-separated columns for {df_name_for_log}:")
-        sorted_stats = sorted(pipe_separated_stats.items(), key=lambda item: item[1], reverse=True)
-        
-        for i, (col, count) in enumerate(sorted_stats):
-            logger.info(f"  - Column '{col}': {count} groups had multiple values.")
-            if i < 3: # Log examples for the top 3
-                first_offending_group_index = nunique_df.index[nunique_df[col] > 1][0]
-                conflicting_values = df_indexed.loc[first_offending_group_index, col].dropna().astype(str).unique()
-                logger.info(f"    - Example for group {first_offending_group_index}: values were {list(conflicting_values)}")
-    
-    # Preserve original column order as much as possible
-    ordered_cols = group_cols + [col for col in df.columns if col in df_aggregated.columns and col not in group_cols]
-    final_ordered_cols = [col for col in ordered_cols if col in df_aggregated.columns]
-    
-    return df_aggregated[final_ordered_cols]
+            for _, row in df_ids.iterrows():
+                # Remove "PPMI-" prefix from PATNO if it exists
+                patno = row["PATNO"]
+                if isinstance(patno, str) and patno.startswith("PPMI-"):
+                    patno = patno[5:]  # Remove first 5 characters ("PPMI-")
+
+                patno_event_pairs.add((patno, row["EVENT_ID"]))
+        except Exception as e:
+            logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
+
+    # Create a dictionary to collect all data
+    # Structure: {(patno, event_id): {column_name: value}}
+    data_dict = {pair: {} for pair in patno_event_pairs}
+
+    # Process each file separately to reduce memory usage
+    for file_path in matching_files:
+        try:
+            # Find the bare filename, split by '_', and ignore 'PPMI', 'Project', and project number
+            tissue = file_path.split("/")[-1].split("_")[3]
+            logger.info(f"Processing file: {file_path} for tissue {tissue}")
+
+            # Read the file in chunks to reduce memory usage
+            chunk_size = 50000
+            # Use specified dtypes and low_memory=False
+            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype={'PATNO': 'string'}, low_memory=False):
+                # Check if required columns exist
+                required_columns = ["PATNO", "EVENT_ID", "UNIPROT", "ASSAY", "MISSINGFREQ", "LOD", "NPX"]
+                if not all(col in chunk.columns for col in required_columns):
+                    missing = [col for col in required_columns if col not in chunk.columns]
+                    logger.error(f"Required columns {missing} not found in {file_path}")
+                    continue
+
+                # Create a combined key for UNIPROT and ASSAY
+                chunk["UNIPROT_ASSAY"] = chunk.apply(
+                        lambda row: f"{tissue}_{row['UNIPROT']}_{row['ASSAY']}", axis=1)
+
+                # Process each row efficiently
+                for _, row in chunk.iterrows():
+                    # Remove "PPMI-" prefix from PATNO if it exists
+                    patno = row["PATNO"]
+                    if isinstance(patno, str) and patno.startswith("PPMI-"):
+                        patno = patno[5:]  # Remove first 5 characters ("PPMI-")
+
+                    event_id = row["EVENT_ID"]
+                    key = (patno, event_id)
+
+                    # Skip if this PATNO/EVENT_ID combination wasn't in our original set
+                    if key not in data_dict:
+                        continue
+
+                    ua = row["UNIPROT_ASSAY"]
+
+                    # Add each metric to the dictionary
+                    for metric in ["MISSINGFREQ", "LOD", "NPX"]:
+                        col_name = f"{project_num}_{ua}_{metric}"
+
+                        # Only update if we don't have a value yet or if the current value is not NaN
+                        # and the existing one is NaN
+                        if (col_name not in data_dict[key] or
+                            (pd.notna(row[metric]) and pd.isna(data_dict[key].get(col_name)))):
+                            data_dict[key][col_name] = row[metric]
+
+                logger.info(f"Processed chunk with {len(chunk)} rows")
+
+                # Explicitly delete chunk after processing
+                del chunk
+                gc.collect() # Collect garbage after each chunk
+
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {e}")
+
+    # Convert the dictionary to a DataFrame efficiently
+    logger.info(f"Converting collected Project {project_num} NPX data to DataFrame")
+
+    # Create a list of dictionaries, each representing a row
+    rows = []
+    for (patno, event_id), values in data_dict.items():
+        row_dict = {"PATNO": patno, "EVENT_ID": event_id}
+        row_dict.update(values)
+        rows.append(row_dict)
+
+    # Create DataFrame from the list of dictionaries (much more efficient than adding columns one by one)
+    result_df = pd.DataFrame(rows)
+
+    # Check if required columns exist (different from the required loading columns above)
+    required_columns = ["PATNO", "EVENT_ID"]
+    for col in required_columns:
+        if col not in result_df.columns:
+            logger.error(f"Required column {col} not found in the Project {project_num} NPX data")
+            return pd.DataFrame()
+
+    # Explicit garbage collection before returning
+    del data_dict # Delete the large intermediate dict
+    gc.collect()
+
+    return result_df
+
 
 
 def load_project_151_pQTL_CSF(folder_path: str, batch_corrected: bool = False) -> pd.DataFrame:
     """
     Load and process Project_151_pQTL_in_CSF data files.
-    
+
     This function:
     1. Finds all files with the prefix "Project_151_pQTL_in_CSF"
     2. Filters based on whether we want batch-corrected files or not
@@ -188,11 +296,11 @@ def load_project_151_pQTL_CSF(folder_path: str, batch_corrected: bool = False) -
     4. Pivots the data to create columns for each unique TESTNAME
     5. Adds "151_" prefix to each TESTNAME column
     6. Keeps only PATNO, SEX, COHORT, EVENT_ID, and the new TESTNAME columns
-    
+
     Args:
         folder_path: Path to the Biospecimen folder containing the CSV files
         batch_corrected: If True, use only batch-corrected files; if False, use non-batch-corrected files
-    
+
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test
     """
@@ -202,92 +310,26 @@ def load_project_151_pQTL_CSF(folder_path: str, batch_corrected: bool = False) -
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix and batch_corrected parameter
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         is_project_151 = filename.startswith("Project_151_pQTL_in_CSF")
         is_batch_corrected = "Batch_Corrected" in filename
-        
+
         if is_project_151 and is_batch_corrected == batch_corrected:
             matching_files.append(file_path)
-    
+
     if not matching_files:
         batch_type = "batch-corrected" if batch_corrected else "non-batch-corrected"
         logger.warning(f"No {batch_type} Project_151_pQTL_in_CSF files found in {folder_path}")
         return pd.DataFrame()
-    
-    # Load and combine all matching files
-    dfs = []
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-            
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
-            dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
-    
-    if not dfs:
-        logger.warning("No files were successfully loaded")
-        return pd.DataFrame()
-    
-    # Combine all dataframes
-    combined_df = pd.concat(dfs, ignore_index=True)
-    
-    # Check if required columns exist
-    required_columns = ["PATNO", "TESTNAME", "TESTVALUE"]
-    for col in required_columns:
-        if col not in combined_df.columns:
-            logger.error(f"Required column {col} not found in the data")
-            return pd.DataFrame()
-    
-    # Keep only the columns we need
-    keep_columns = ["PATNO", "EVENT_ID", "SEX", "COHORT", "TESTNAME", "TESTVALUE"]
-    keep_columns = [col for col in keep_columns if col in combined_df.columns]
-    combined_df = combined_df[keep_columns]
-    
-    # Pivot the data to create columns for each TESTNAME
-    try:
-        # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME
-        # If there are duplicates, keep the first occurrence
-        combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
-        
-        # Pivot the data
-        pivot_columns = ["PATNO", "EVENT_ID"]
-        if "SEX" in combined_df.columns:
-            pivot_columns.append("SEX")
-        if "COHORT" in combined_df.columns:
-            pivot_columns.append("COHORT")
-        
-        pivoted_df = combined_df.pivot_table(
-            index=pivot_columns,
-            columns="TESTNAME",
-            values="TESTVALUE",
-            aggfunc="first"  # In case there are still duplicates
-        ).reset_index()
-        
-        # Rename columns to add "151_" prefix to TESTNAME columns
-        # First, get the names of columns that were created from TESTNAME
-        testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
-        # Create a dictionary for renaming
-        rename_dict = {col: f"151_{col}" for col in testname_columns}
-        
-        # Rename the columns
-        pivoted_df = pivoted_df.rename(columns=rename_dict)
-        
-        logger.info(f"Successfully processed Project_151_pQTL_in_CSF data: {len(pivoted_df)} rows, {len(pivoted_df.columns)} columns")
-        return pivoted_df
-        
-    except Exception as e:
-        logger.error(f"Error pivoting data: {e}")
-        return pd.DataFrame()
+
+    result_df = _process_test_file(matching_files, "Project_151", "151")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Project_151_pQTL_in_CSF data: {len(result_df)} rows, {len(result_df.columns)} columns")
+    return result_df
 
 
 def load_metabolomic_lrrk2(folder_path: str, include_csf: bool = True) -> pd.DataFrame:
@@ -315,95 +357,29 @@ def load_metabolomic_lrrk2(folder_path: str, include_csf: bool = True) -> pd.Dat
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         is_metabolomic_lrrk2 = filename.startswith("Metabolomic_Analysis_of_LRRK2")
         is_csf = "_CSF" in filename
-        
+
         # Include the file if:
         # 1. It's a regular LRRK2 file (not CSF) OR
         # 2. It's a CSF file and include_csf is True
         if is_metabolomic_lrrk2 and (not is_csf or include_csf):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         csf_status = "including CSF files" if include_csf else "excluding CSF files"
         logger.warning(f"No Metabolomic_Analysis_of_LRRK2 files found in {folder_path} ({csf_status})")
         return pd.DataFrame()
-    
-    # Load and combine all matching files
-    dfs = []
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-            
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
-            dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
-    
-    if not dfs:
-        logger.warning("No files were successfully loaded")
-        return pd.DataFrame()
-    
-    # Combine all dataframes
-    combined_df = pd.concat(dfs, ignore_index=True)
-    
-    # Check if required columns exist
-    required_columns = ["PATNO", "TESTNAME", "TESTVALUE"]
-    for col in required_columns:
-        if col not in combined_df.columns:
-            logger.error(f"Required column {col} not found in the data")
-            return pd.DataFrame()
-    
-    # Keep only the columns we need
-    keep_columns = ["PATNO", "EVENT_ID", "SEX", "COHORT", "TESTNAME", "TESTVALUE"]
-    keep_columns = [col for col in keep_columns if col in combined_df.columns]
-    combined_df = combined_df[keep_columns]
-    
-    # Pivot the data to create columns for each TESTNAME
-    try:
-        # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME
-        # If there are duplicates, keep the first occurrence
-        combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
-        
-        # Pivot the data
-        pivot_columns = ["PATNO", "EVENT_ID"]
-        if "SEX" in combined_df.columns:
-            pivot_columns.append("SEX")
-        if "COHORT" in combined_df.columns:
-            pivot_columns.append("COHORT")
-        
-        pivoted_df = combined_df.pivot_table(
-            index=pivot_columns,
-            columns="TESTNAME",
-            values="TESTVALUE",
-            aggfunc="first"  # In case there are still duplicates
-        ).reset_index()
-        
-        # Rename columns to add "LRRK2_" prefix to TESTNAME columns
-        # First, get the names of columns that were created from TESTNAME
-        testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
-        # Create a dictionary for renaming
-        rename_dict = {col: f"LRRK2_{col}" for col in testname_columns}
-        
-        # Rename the columns
-        pivoted_df = pivoted_df.rename(columns=rename_dict)
-        
-        logger.info(f"Successfully processed Metabolomic_Analysis_of_LRRK2 data: {len(pivoted_df)} rows, {len(pivoted_df.columns)} columns")
-        return pivoted_df
-        
-    except Exception as e:
-        logger.error(f"Error pivoting data: {e}")
-        return pd.DataFrame()
+
+    result_df = _process_test_file(matching_files, "Metabolomic_Analysis_of_LRRK2", "LRRK2")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Metabolomic_Analysis_of_LRRK2 data: {len(result_df)} rows, {len(result_df.columns)} columns")
+    return result_df
 
 
 def load_urine_proteomics(folder_path: str) -> pd.DataFrame:
@@ -512,11 +488,10 @@ def load_urine_proteomics(folder_path: str) -> pd.DataFrame:
         logger.error(f"Error pivoting data: {e}")
         return pd.DataFrame()
 
-
 def load_project_9000(folder_path: str) -> pd.DataFrame:
     """
     Load and process PPMI_Project_9000 data files.
-    
+
     This function:
     1. Finds all files with the prefix "PPMI_Project_9000"
     2. For each unique UNIPROT-ASSAY combination, creates three columns:
@@ -529,7 +504,7 @@ def load_project_9000(folder_path: str) -> pd.DataFrame:
     
     Args:
         folder_path: Path to the Biospecimen folder containing the CSV files
-    
+
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
     """
@@ -539,115 +514,21 @@ def load_project_9000(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("PPMI_Project_9000"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No PPMI_Project_9000 files found in {folder_path}")
         return pd.DataFrame()
-    
-    # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
-    logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
-    patno_event_pairs = set()
-    
-    # Process files one by one to avoid loading all data at once
-    for file_path in matching_files:
-        try:
-            # Read only PATNO and EVENT_ID columns to get unique combinations
-            # Specify dtype for PATNO here too
-            df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"], dtype={'PATNO': 'string'}) 
-            
-            for _, row in df_ids.iterrows():
-                # Remove "PPMI-" prefix from PATNO if it exists
-                patno = row["PATNO"]
-                if isinstance(patno, str) and patno.startswith("PPMI-"):
-                    patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                
-                patno_event_pairs.add((patno, row["EVENT_ID"]))
-        except Exception as e:
-            logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
-    
-    # Create a dictionary to collect all data
-    # Structure: {(patno, event_id): {column_name: value}}
-    data_dict = {pair: {} for pair in patno_event_pairs}
-    
-    # Process each file separately to reduce memory usage
-    for file_path in matching_files:
-        try:
-            logger.info(f"Processing file: {file_path}")
-            
-            # Read the file in chunks to reduce memory usage
-            chunk_size = 50000
-            # Use specified dtypes and low_memory=False
-            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype=dtypes, low_memory=False):
-                # Check if required columns exist
-                required_columns = ["PATNO", "EVENT_ID", "UNIPROT", "ASSAY", "MISSINGFREQ", "LOD", "NPX"]
-                if not all(col in chunk.columns for col in required_columns):
-                    missing = [col for col in required_columns if col not in chunk.columns]
-                    logger.error(f"Required columns {missing} not found in {file_path}")
-                    continue
-                
-                # Create a combined key for UNIPROT and ASSAY
-                chunk["UNIPROT_ASSAY"] = chunk["UNIPROT"] + "_" + chunk["ASSAY"]
-                
-                # Process each row efficiently
-                for _, row in chunk.iterrows():
-                    # Remove "PPMI-" prefix from PATNO if it exists
-                    patno = row["PATNO"]
-                    if isinstance(patno, str) and patno.startswith("PPMI-"):
-                        patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
-                    event_id = row["EVENT_ID"]
-                    key = (patno, event_id)
-                    
-                    # Skip if this PATNO/EVENT_ID combination wasn't in our original set
-                    if key not in data_dict:
-                        continue
-                    
-                    ua = row["UNIPROT_ASSAY"]
-                    
-                    # Add each metric to the dictionary
-                    for metric in ["MISSINGFREQ", "LOD", "NPX"]:
-                        col_name = f"9000_{ua}_{metric}"
-                        
-                        # Only update if we don't have a value yet or if the current value is not NaN
-                        # and the existing one is NaN
-                        if (col_name not in data_dict[key] or 
-                            (pd.notna(row[metric]) and pd.isna(data_dict[key].get(col_name)))):
-                            data_dict[key][col_name] = row[metric]
-                
-                logger.info(f"Processed chunk with {len(chunk)} rows")
-                
-                # Explicitly delete chunk after processing
-                del chunk
-                gc.collect() # Collect garbage after each chunk
-            
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {e}")
-    
-    # Convert the dictionary to a DataFrame efficiently
-    logger.info("Converting collected data to DataFrame")
-    
-    # Create a list of dictionaries, each representing a row
-    rows = []
-    for (patno, event_id), values in data_dict.items():
-        row_dict = {"PATNO": patno, "EVENT_ID": event_id}
-        row_dict.update(values)
-        rows.append(row_dict)
-    
-    # Create DataFrame from the list of dictionaries (much more efficient than adding columns one by one)
-    result_df = pd.DataFrame(rows)
-    
-    # Explicit garbage collection before returning
-    del data_dict # Delete the large intermediate dict
-    gc.collect()
-    
-    logger.info(f"Successfully processed Project 9000 data: {len(result_df)} rows, {len(result_df.columns)} columns")
+
+    result_df = _process_npx_files(matching_files, "9000")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Project 9000 data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
 
 
@@ -677,115 +558,21 @@ def load_project_222(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("PPMI_Project_222"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No PPMI_Project_222 files found in {folder_path}")
         return pd.DataFrame()
-    
-    # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
-    logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
-    patno_event_pairs = set()
-    
-    # Process files one by one to avoid loading all data at once
-    for file_path in matching_files:
-        try:
-            # Read only PATNO and EVENT_ID columns to get unique combinations
-            # Specify dtype for PATNO here too
-            df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"], dtype={'PATNO': 'string'}) 
-            
-            for _, row in df_ids.iterrows():
-                # Remove "PPMI-" prefix from PATNO if it exists
-                patno = row["PATNO"]
-                if isinstance(patno, str) and patno.startswith("PPMI-"):
-                    patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                
-                patno_event_pairs.add((patno, row["EVENT_ID"]))
-        except Exception as e:
-            logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
-    
-    # Create a dictionary to collect all data
-    # Structure: {(patno, event_id): {column_name: value}}
-    data_dict = {pair: {} for pair in patno_event_pairs}
-    
-    # Process each file separately to reduce memory usage
-    for file_path in matching_files:
-        try:
-            logger.info(f"Processing file: {file_path}")
-            
-            # Read the file in chunks to reduce memory usage
-            chunk_size = 50000
-            # Use specified dtypes and low_memory=False
-            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype=dtypes, low_memory=False):
-                # Check if required columns exist
-                required_columns = ["PATNO", "EVENT_ID", "UNIPROT", "ASSAY", "MISSINGFREQ", "LOD", "NPX"]
-                if not all(col in chunk.columns for col in required_columns):
-                    missing = [col for col in required_columns if col not in chunk.columns]
-                    logger.error(f"Required columns {missing} not found in {file_path}")
-                    continue
-                
-                # Create a combined key for UNIPROT and ASSAY
-                chunk["UNIPROT_ASSAY"] = chunk["UNIPROT"] + "_" + chunk["ASSAY"]
-                
-                # Process each row efficiently
-                for _, row in chunk.iterrows():
-                    # Remove "PPMI-" prefix from PATNO if it exists
-                    patno = row["PATNO"]
-                    if isinstance(patno, str) and patno.startswith("PPMI-"):
-                        patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
-                    event_id = row["EVENT_ID"]
-                    key = (patno, event_id)
-                    
-                    # Skip if this PATNO/EVENT_ID combination wasn't in our original set
-                    if key not in data_dict:
-                        continue
-                    
-                    ua = row["UNIPROT_ASSAY"]
-                    
-                    # Add each metric to the dictionary
-                    for metric in ["MISSINGFREQ", "LOD", "NPX"]:
-                        col_name = f"222_{ua}_{metric}"  # Using "222_" prefix instead of "9000_"
-                        
-                        # Only update if we don't have a value yet or if the current value is not NaN
-                        # and the existing one is NaN
-                        if (col_name not in data_dict[key] or 
-                            (pd.notna(row[metric]) and pd.isna(data_dict[key].get(col_name)))):
-                            data_dict[key][col_name] = row[metric]
-                
-                logger.info(f"Processed chunk with {len(chunk)} rows")
-                
-                # Explicitly delete chunk after processing
-                del chunk
-                gc.collect() # Collect garbage after each chunk
-            
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {e}")
-    
-    # Convert the dictionary to a DataFrame efficiently
-    logger.info("Converting collected data to DataFrame")
-    
-    # Create a list of dictionaries, each representing a row
-    rows = []
-    for (patno, event_id), values in data_dict.items():
-        row_dict = {"PATNO": patno, "EVENT_ID": event_id}
-        row_dict.update(values)
-        rows.append(row_dict)
-    
-    # Create DataFrame from the list of dictionaries (much more efficient than adding columns one by one)
-    result_df = pd.DataFrame(rows)
-    
-    # Explicit garbage collection before returning
-    del data_dict # Delete the large intermediate dict
-    gc.collect()
-    
-    logger.info(f"Successfully processed Project 222 data: {len(result_df)} rows, {len(result_df.columns)} columns")
+
+    result_df = _process_npx_files(matching_files, "222")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Project 222 data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
 
 
@@ -815,112 +602,63 @@ def load_project_196(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("PPMI_Project_196"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No PPMI_Project_196 files found in {folder_path}")
         return pd.DataFrame()
-    
+
     # Separate files into NPX and Counts categories
     npx_files = [f for f in matching_files if "NPX" in os.path.basename(f)]
     counts_files = [f for f in matching_files if "Counts" in os.path.basename(f)]
-    
+
     logger.info(f"Found {len(npx_files)} NPX files and {len(counts_files)} Counts files")
-    
+
+    # Process NPX files
+    npx_df = _process_npx_files(npx_files, "196")
+
+    # Process Counts files
     # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
     logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
     patno_event_pairs = set()
-    
+
     # Process files one by one to avoid loading all data at once
-    for file_path in matching_files:
+    for file_path in counts_files:
         try:
             # Read only PATNO and EVENT_ID columns to get unique combinations
             # Specify dtype for PATNO here too
             df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"], dtype={'PATNO': 'string'}) 
-            
+
             for _, row in df_ids.iterrows():
                 # Remove "PPMI-" prefix from PATNO if it exists
                 patno = row["PATNO"]
                 if isinstance(patno, str) and patno.startswith("PPMI-"):
                     patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                
+
                 patno_event_pairs.add((patno, row["EVENT_ID"]))
         except Exception as e:
             logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
-    
+
     # Create a dictionary to collect all data
     # Structure: {(patno, event_id): {column_name: value}}
     data_dict = {pair: {} for pair in patno_event_pairs}
-    
-    # Process NPX files
-    for file_path in npx_files:
-        try:
-            logger.info(f"Processing NPX file: {file_path}")
-            
-            # Read the file in chunks to reduce memory usage
-            chunk_size = 50000
-            # Use specified dtypes and low_memory=False
-            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype=npx_dtypes, low_memory=False):
-                # Check if required columns exist
-                required_columns = ["PATNO", "EVENT_ID", "UNIPROT", "ASSAY", "MISSINGFREQ", "LOD", "NPX"]
-                if not all(col in chunk.columns for col in required_columns):
-                    missing = [col for col in required_columns if col not in chunk.columns]
-                    logger.error(f"Required columns {missing} not found in {file_path}")
-                    continue
-                
-                # Create a combined key for UNIPROT and ASSAY
-                chunk["UNIPROT_ASSAY"] = chunk["UNIPROT"] + "_" + chunk["ASSAY"]
-                
-                # Process each row efficiently
-                for _, row in chunk.iterrows():
-                    # Remove "PPMI-" prefix from PATNO if it exists
-                    patno = row["PATNO"]
-                    if isinstance(patno, str) and patno.startswith("PPMI-"):
-                        patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
-                    event_id = row["EVENT_ID"]
-                    key = (patno, event_id)
-                    
-                    # Skip if this PATNO/EVENT_ID combination wasn't in our original set
-                    if key not in data_dict:
-                        continue
-                    
-                    ua = row["UNIPROT_ASSAY"]
-                    
-                    # Add each metric to the dictionary
-                    for metric in ["MISSINGFREQ", "LOD", "NPX"]:
-                        col_name = f"196_{ua}_{metric}"
-                        
-                        # Only update if we don't have a value yet or if the current value is not NaN
-                        # and the existing one is NaN
-                        if (col_name not in data_dict[key] or 
-                            (pd.notna(row[metric]) and pd.isna(data_dict[key].get(col_name)))):
-                            data_dict[key][col_name] = row[metric]
-                
-                logger.info(f"Processed NPX chunk with {len(chunk)} rows")
-                
-                # Explicitly delete chunk after processing
-                del chunk
-                gc.collect() # Collect garbage after each chunk
-            
-        except Exception as e:
-            logger.error(f"Error processing NPX file {file_path}: {e}")
-    
-    # Process Counts files
+
     for file_path in counts_files:
         try:
-            logger.info(f"Processing Counts file: {file_path}")
-            
+            # Find the bare filename, split by '_', and ignore 'PPMI', 'Project', and project number
+            tissue = file_path.split("/")[-1].split("_")[3]
+            logger.info(f"Processing Counts file: {file_path} for tissue {tissue}")
+
             # Read the file in chunks to reduce memory usage
             chunk_size = 50000
             # Use specified dtypes and low_memory=False
-            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype=counts_dtypes, low_memory=False):
+            for chunk in pd.read_csv(file_path, chunksize=chunk_size, dtype={"PATNO": "string"}, low_memory=False):
                 # Check if required columns exist
                 required_columns = ["PATNO", "EVENT_ID", "UNIPROT", "ASSAY", "COUNT", 
                                    "INCUBATIONCONTROLCOUNT", "AMPLIFICATIONCONTROLCOUNT", 
@@ -929,26 +667,27 @@ def load_project_196(folder_path: str) -> pd.DataFrame:
                     missing = [col for col in required_columns if col not in chunk.columns]
                     logger.error(f"Required columns {missing} not found in {file_path}")
                     continue
-                
+
                 # Create a combined key for UNIPROT and ASSAY
-                chunk["UNIPROT_ASSAY"] = chunk["UNIPROT"] + "_" + chunk["ASSAY"]
-                
+                chunk["UNIPROT_ASSAY"] = chunk.apply(
+                        lambda row: f"{tissue}_{row['UNIPROT']}_{row['ASSAY']}", axis=1)
+
                 # Process each row efficiently
                 for _, row in chunk.iterrows():
                     # Remove "PPMI-" prefix from PATNO if it exists
                     patno = row["PATNO"]
                     if isinstance(patno, str) and patno.startswith("PPMI-"):
                         patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
+
                     event_id = row["EVENT_ID"]
                     key = (patno, event_id)
-                    
+
                     # Skip if this PATNO/EVENT_ID combination wasn't in our original set
                     if key not in data_dict:
                         continue
-                    
+
                     ua = row["UNIPROT_ASSAY"]
-                    
+
                     # Map the long column names to abbreviated versions
                     metric_mapping = {
                         "COUNT": "COUNT",
@@ -956,43 +695,50 @@ def load_project_196(folder_path: str) -> pd.DataFrame:
                         "AMPLIFICATIONCONTROLCOUNT": "AMP",
                         "EXTENSIONCONTROLCOUNT": "EXT"
                     }
-                    
+
                     # Add each metric to the dictionary
                     for long_name, short_name in metric_mapping.items():
                         col_name = f"196_{ua}_{short_name}"
-                        
+
                         # Only update if we don't have a value yet or if the current value is not NaN
                         # and the existing one is NaN
-                        if (col_name not in data_dict[key] or 
+                        if (col_name not in data_dict[key] or
                             (pd.notna(row[long_name]) and pd.isna(data_dict[key].get(col_name)))):
                             data_dict[key][col_name] = row[long_name]
-                
+
                 logger.info(f"Processed Counts chunk with {len(chunk)} rows")
-                
+
                 # Explicitly delete chunk after processing
                 del chunk
                 gc.collect() # Collect garbage after each chunk
-            
+
         except Exception as e:
             logger.error(f"Error processing Counts file {file_path}: {e}")
-    
+
     # Convert the dictionary to a DataFrame efficiently
-    logger.info("Converting collected data to DataFrame")
-    
+    logger.info("Converting collected Project 196 Counts data to DataFrame")
+
     # Create a list of dictionaries, each representing a row
     rows = []
     for (patno, event_id), values in data_dict.items():
         row_dict = {"PATNO": patno, "EVENT_ID": event_id}
         row_dict.update(values)
         rows.append(row_dict)
-    
+
     # Create DataFrame from the list of dictionaries
     result_df = pd.DataFrame(rows)
-    
+
     # Explicit garbage collection before returning
     del data_dict # Delete the large intermediate dict
     gc.collect()
-    
+
+    # Merge NPX and Counts results together
+    try:
+        result_df = result_df.merge(npx_df, how="outer", on=["PATNO", "EVENT_ID"])
+    except Exception as e:
+        logger.error(f"Error merging NPX and Counts data for Project 196: {e}")
+        return pd.DataFrame()
+
     logger.info(f"Successfully processed Project 196 data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
 
@@ -1020,80 +766,22 @@ def load_project_177_untargeted_proteomics(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("PPMI_Project_177"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No PPMI_Project_177 files found in {folder_path}")
         return pd.DataFrame()
-    
-    # Load and combine all matching files
-    dfs = []
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-            
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
-            dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
-    
-    if not dfs:
-        logger.warning("No files were successfully loaded")
-        return pd.DataFrame()
-    
-    # Combine all dataframes
-    combined_df = pd.concat(dfs, ignore_index=True)
-    
-    # Check if required columns exist
-    required_columns = ["PATNO", "EVENT_ID", "TESTNAME", "TESTVALUE"]
-    for col in required_columns:
-        if col not in combined_df.columns:
-            logger.error(f"Required column {col} not found in the data")
-            return pd.DataFrame()
-    
-    try:
-        # Determine which columns to keep for the pivot
-        pivot_columns = ["PATNO", "EVENT_ID"]
-        if "SEX" in combined_df.columns:
-            pivot_columns.append("SEX")
-        if "COHORT" in combined_df.columns:
-            pivot_columns.append("COHORT")
-        
-        # Pivot the data to create columns for each TESTNAME
-        pivoted_df = pd.pivot_table(
-            combined_df,
-            index=pivot_columns,
-            columns="TESTNAME",
-            values="TESTVALUE",
-            aggfunc="first"  # In case there are duplicates
-        ).reset_index()
-        
-        # Rename columns to add "177_" prefix to TESTNAME columns
-        # First, get the names of columns that were created from TESTNAME
-        testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
-        # Create a dictionary for renaming
-        rename_dict = {col: f"177_{col}" for col in testname_columns}
-        
-        # Rename the columns
-        pivoted_df = pivoted_df.rename(columns=rename_dict)
-        
-        logger.info(f"Successfully processed Project 177 data: {len(pivoted_df)} rows, {len(pivoted_df.columns)} columns")
-        return pivoted_df
-        
-    except Exception as e:
-        logger.error(f"Error pivoting data: {e}")
-        return pd.DataFrame()
+
+    result_df = _process_test_file(matching_files, "Project_177", "177")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Project 177 data: {len(result_df)} rows, {len(result_df.columns)} columns")
+    return result_df
 
 
 def load_project_214_olink(folder_path: str) -> pd.DataFrame:
@@ -1219,7 +907,7 @@ def load_project_214_olink(folder_path: str) -> pd.DataFrame:
                         
                         # Only update if we don't have a value yet or if the current value is not NaN
                         # and the existing one is NaN
-                        if (col_name not in data_dict[key] or 
+                        if (col_name not in data_dict[key] or
                             (pd.notna(row[metric]) and pd.isna(data_dict[key].get(col_name)))):
                             data_dict[key][col_name] = row[metric]
                 
@@ -1276,86 +964,27 @@ def load_current_biospecimen_analysis(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("Current_Biospecimen_Analysis_Results"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No Current_Biospecimen_Analysis_Results files found in {folder_path}")
         return pd.DataFrame()
-    
-    # Load and combine all matching files
-    dfs = []
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-            
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
-            dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
-    
-    if not dfs:
-        logger.warning("No files were successfully loaded")
-        return pd.DataFrame()
-    
-    # Combine all dataframes
-    combined_df = pd.concat(dfs, ignore_index=True)
-    
-    # Check if required columns exist
-    required_columns = ["PATNO", "EVENT_ID", "TESTNAME", "TESTVALUE"]
-    for col in required_columns:
-        if col not in combined_df.columns:
-            logger.error(f"Required column {col} not found in the data")
-            return pd.DataFrame()
-    
-    try:
-        # Determine which columns to keep for the pivot
-        pivot_columns = ["PATNO", "EVENT_ID"]
-        if "SEX" in combined_df.columns:
-            pivot_columns.append("SEX")
-        if "COHORT" in combined_df.columns:
-            pivot_columns.append("COHORT")
-        
-        # Pivot the data to create columns for each TESTNAME
-        pivoted_df = pd.pivot_table(
-            combined_df,
-            index=pivot_columns,
-            columns="TESTNAME",
-            values="TESTVALUE",
-            aggfunc="first"  # In case there are duplicates
-        ).reset_index()
-        
-        # Rename columns to add "BIO_" prefix to TESTNAME columns
-        # First, get the names of columns that were created from TESTNAME
-        testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
-        # Create a dictionary for renaming
-        rename_dict = {col: f"BIO_{col}" for col in testname_columns}
-        
-        # Rename the columns
-        pivoted_df = pivoted_df.rename(columns=rename_dict)
-        
-        logger.info(f"Successfully processed Current Biospecimen Analysis data: {len(pivoted_df)} rows, {len(pivoted_df.columns)} columns")
-        return pivoted_df
-        
-    except Exception as e:
-        logger.error(f"Error pivoting data: {e}")
-        return pd.DataFrame()
 
+    result_df = _process_test_file(matching_files, "Current_Biospecimen_Analysis", "BIO")
+    if not result_df.empty:
+        logger.info(f"Successfully processed Current Biospecimen Analysis data: {len(result_df)} rows, {len(result_df.columns)} columns")
+    return result_df
 
 def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
     """
     Load and process Blood_Chemistry___Hematology data files.
-    
+
     This function:
     1. Finds all files with the prefix "Blood_Chemistry___Hematology"
     2. For each unique LTSTCODE-LTSTNAME combination, creates three columns:
@@ -1366,10 +995,10 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
     4. Replaces spaces with underscores in the column names
     5. Keeps only PATNO, EVENT_ID, and the newly created columns
     6. Removes "PPMI-" prefix from PATNO values if present
-    
+
     Args:
         folder_path: Path to the Biospecimen folder containing the CSV files
-    
+
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test metric
     """
@@ -1379,47 +1008,47 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
         for file in files:
             if file.lower().endswith('.csv'):
                 all_csv_files.append(os.path.join(root, file))
-    
+
     # Filter files based on prefix
     matching_files = []
     for file_path in all_csv_files:
         filename = os.path.basename(file_path)
         if filename.startswith("Blood_Chemistry___Hematology"):
             matching_files.append(file_path)
-    
+
     if not matching_files:
         logger.warning(f"No Blood_Chemistry___Hematology files found in {folder_path}")
         return pd.DataFrame()
-    
+
     # First, get unique PATNO/EVENT_ID combinations to create the base dataframe
     logger.info("Creating base dataframe with unique PATNO/EVENT_ID combinations")
     patno_event_pairs = set()
-    
+
     # Process files one by one to avoid loading all data at once
     for file_path in matching_files:
         try:
             # Read only PATNO and EVENT_ID columns to get unique combinations
             df_ids = pd.read_csv(file_path, usecols=["PATNO", "EVENT_ID"])
-            
+
             for _, row in df_ids.iterrows():
                 # Remove "PPMI-" prefix from PATNO if it exists
                 patno = row["PATNO"]
                 if isinstance(patno, str) and patno.startswith("PPMI-"):
                     patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                
+
                 patno_event_pairs.add((patno, row["EVENT_ID"]))
         except Exception as e:
             logger.error(f"Error reading PATNO/EVENT_ID from {file_path}: {e}")
-    
+
     # Create a dictionary to collect all data
     # Structure: {(patno, event_id): {column_name: value}}
     data_dict = {pair: {} for pair in patno_event_pairs}
-    
+
     # Process each file separately to reduce memory usage
     for file_path in matching_files:
         try:
             logger.info(f"Processing file: {file_path}")
-            
+
             # Read the file in chunks to reduce memory usage
             chunk_size = 50000  # Increased chunk size for better performance
             for chunk in pd.read_csv(file_path, chunksize=chunk_size):
@@ -1429,27 +1058,27 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
                     missing = [col for col in required_columns if col not in chunk.columns]
                     logger.error(f"Required columns {missing} not found in {file_path}")
                     continue
-                
+
                 # Process each row efficiently
                 for _, row in chunk.iterrows():
                     # Remove "PPMI-" prefix from PATNO if it exists
                     patno = row["PATNO"]
                     if isinstance(patno, str) and patno.startswith("PPMI-"):
                         patno = patno[5:]  # Remove first 5 characters ("PPMI-")
-                    
+
                     event_id = row["EVENT_ID"]
                     key = (patno, event_id)
-                    
+
                     # Skip if this PATNO/EVENT_ID combination wasn't in our original set
                     if key not in data_dict:
                         continue
-                    
+
                     # Create a combined key for LTSTCODE and LTSTNAME
                     # Replace spaces with underscores
                     test_code = str(row["LTSTCODE"]).strip()
                     test_name = str(row["LTSTNAME"]).strip().replace(" ", "_")
                     combined_name = f"{test_code}_{test_name}"
-                    
+
                     # Add each metric to the dictionary
                     for metric, column in [
                         ("LSIRES", "LSIRES"), 
@@ -1457,40 +1086,41 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
                         ("LSIHIRNG", "LSIHIRNG")
                     ]:
                         col_name = f"BCH_{combined_name}_{metric}"
-                        
+
                         # Only update if we don't have a value yet or if the current value is not NaN
                         # and the existing one is NaN
-                        if (col_name not in data_dict[key] or 
+                        if (col_name not in data_dict[key] or
                             (pd.notna(row[column]) and pd.isna(data_dict[key].get(col_name)))):
                             data_dict[key][col_name] = row[column]
-                
+
                 logger.info(f"Processed chunk with {len(chunk)} rows")
-                
+
                 # Explicitly delete chunk after processing
                 del chunk
                 gc.collect() # Collect garbage after each chunk
-            
+
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
-    
+
     # Convert the dictionary to a DataFrame efficiently
     logger.info("Converting collected data to DataFrame")
-    
+
     # Create a list of dictionaries, each representing a row
     rows = []
     for (patno, event_id), values in data_dict.items():
         row_dict = {"PATNO": patno, "EVENT_ID": event_id}
         row_dict.update(values)
         rows.append(row_dict)
-    
-    # Create DataFrame from the list of dictionaries
-    result_df = pd.DataFrame(rows)
-    
+
     # Explicit garbage collection before returning
     del data_dict # Delete the large intermediate dict
     gc.collect()
-    
-    logger.info(f"Successfully processed Blood Chemistry & Hematology data: {len(result_df)} rows, {len(result_df.columns)} columns")
+
+    # Create DataFrame from the list of dictionaries
+    result_df = pd.DataFrame(rows)
+
+    if not result_df.empty:
+        logger.info(f"Successfully processed Blood Chemistry & Hematology data: {len(result_df)} rows, {len(result_df.columns)} columns")
     return result_df
 
 
@@ -1681,7 +1311,7 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
         return result_df
 
 
-def load_biospecimen_data(data_path: str, source: str, exclude: list = None) -> dict:
+def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = None) -> dict:
     """
     Load biospecimen data from the specified path.
     
@@ -1695,7 +1325,7 @@ def load_biospecimen_data(data_path: str, source: str, exclude: list = None) -> 
     """
     # Initialize exclude if None
     if exclude is None:
-        exclude = []
+        exclude = ["standard_files"] # Default to ignoring technical parameters
     
     if exclude:
         logger.info(f"Will exclude the following projects: {exclude}")
@@ -1866,10 +1496,12 @@ def load_biospecimen_data(data_path: str, source: str, exclude: list = None) -> 
         logger.info("Skipping Blood Chemistry & Hematology (excluded)")
     
     # Load files that don't require individual processing
+    # These files generally record technical parameters about testing, such as
+    # volume of blood collected, hours of fasting, etc, rather than results.
     if "standard_files" not in exclude:
         try:
             standard_file_prefixes = [
-                "Clinical_Labs",
+                "Clinical_Labs", # Just a record of when labs were taken: no data
                 "Genetic_Testing_Results",
                 "Skin_Biopsy",
                 "Research_Biospecimens",
@@ -1912,10 +1544,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
         If merge_all is True: A single DataFrame with all biospecimen data merged on PATNO and EVENT_ID
         If merge_all is False: The original dictionary of DataFrames with potential file saving
     """
-    # Import only when needed for memory tracking
-    # import psutil # Already imported at module level if needed elsewhere, or can be local
-    # import gc # Already imported at module level
-    
+
     # Initialize include/exclude to empty lists if None
     if include is None:
         include = []
@@ -1985,7 +1614,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
 
             # Aggregate duplicates within this specific source DataFrame *before* prefixing and merging globally
             # This is an important step if individual loaders don't guarantee uniqueness
-            df = _aggregate_by_patno_eventid(df, df_name_for_log=f"Source: {source_name}")
+            df = aggregate_by_patno_eventid(df, source_name)
 
             current_pairs = set(map(lambda x: (x[0], x[1]), 
                                     df[["PATNO", "EVENT_ID"]].drop_duplicates().itertuples(index=False, name=None)))
@@ -1994,7 +1623,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
             # Prefix columns other than PATNO, EVENT_ID
             # This happens *after* internal aggregation for the source
             rename_dict = {
-                col: f"{source_name}_{col}" 
+                col: f"{source_name}_{col}"
                 for col in df.columns if col not in ["PATNO", "EVENT_ID"]
             }
             df.rename(columns=rename_dict, inplace=True)
@@ -2048,7 +1677,7 @@ def merge_biospecimen_data(biospecimen_data: dict, merge_all: bool = True,
         # This acts as a safeguard if the merge process itself introduced duplicates or if
         # PATNO/EVENT_ID combinations were present in all_pairs but not fully resolved.
         logger.info("Performing final aggregation on the fully merged biospecimen DataFrame...")
-        merged_df = _aggregate_by_patno_eventid(merged_df, df_name_for_log="Fully Merged Biospecimen")
+        merged_df = aggregate_by_patno_eventid(merged_df, "Fully Merged Biospecimen")
 
         logger.info(f"Final merged biospecimen DataFrame: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
         

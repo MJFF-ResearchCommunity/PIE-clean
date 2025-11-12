@@ -1,0 +1,9 @@
+﻿PATNO,SEX,COHORT,CLINICAL_EVENT,TYPE,TESTNAME,TESTVALUE,UNITS,RUNDATE,PROJECTID,PI_NAME,PI_INSTITUTION,SAMPLEID,update_stamp
+9999,Male,PD,BL,Cerebrospinal Fluid,P55058,20000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9999,Male,PD,BL,Cerebrospinal Fluid,P54819,30000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9999,Male,PD,BL,Cerebrospinal Fluid,P54289,40000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9999,Male,PD,BL,Cerebrospinal Fluid,P51888,50000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,P55058,20000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,P54819,30000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,P54289,40000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,P51888,50000.1,Arbitrary Protein Abundance,2012-02-01,177,Jane Doe,Company Inc,1111111,2025-08-22 16:02

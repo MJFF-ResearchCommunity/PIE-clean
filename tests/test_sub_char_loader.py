@@ -1,0 +1,106 @@
+import sys
+import shutil
+import logging
+from pathlib import Path
+import pandas as pd
+
+# Add the parent directory to the Python path to make the pie module importable
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from pie_clean.sub_char_loader import (
+    load_ppmi_subject_characteristics, FILE_PREFIXES
+)
+
+logging.getLogger("PIE").setLevel(logging.DEBUG)
+DATA_DIR = "tests/test_data"
+SUB_DIR = "_Subject_Characteristics"
+
+load_msg = f"Loading subject characteristics file: {DATA_DIR}/{SUB_DIR}"
+
+def test_load_ppmi_subject_characteristics(caplog):
+    df = load_ppmi_subject_characteristics(DATA_DIR)
+
+    # We expect to see certain files, which are handled in specific ways
+    # The logger output clarifies how they were handled
+    # First, just check that we're looking for everything
+    for filename in FILE_PREFIXES:
+        assert filename in caplog.text
+
+    # Now pick out some specifics
+    for record in caplog.records:
+        if "Age_at_visit" in record.message:
+            # One and only one message, for loading
+            assert f"{load_msg}/Age_at_visit" in record.message
+        elif "Family_History" in record.message:
+            # One and only one message, for loading
+            assert f"{load_msg}/Family_History" in record.message
+        elif "Participant_Status" in record.message:
+            # Two logs: one for loading, and one for merging
+            assert f"{load_msg}/Participant_Status" in record.message or \
+                    "on PATNO only (it lacks EVENT_ID)" in record.message
+            # And merging must be in there somewhere
+            assert "on PATNO only (it lacks EVENT_ID)" in caplog.text
+        elif "Subject_Cohort_History" in record.message:
+            # Two logs: one for loading, and one for merging
+            assert f"{load_msg}/Subject_Cohort_History" in record.message or \
+                    "on PATNO only (it lacks EVENT_ID)" in record.message
+            # And merging must be in there somewhere
+            assert "on PATNO only (it lacks EVENT_ID)" in caplog.text
+
+    # We expect to see something from every table merged together in the output
+    assert "PATNO" in df.columns
+    assert "EVENT_ID" in df.columns
+    assert "AGE_AT_VISIT" in df.columns
+    assert "ANYFAMPD" in df.columns
+    assert "ENRLGBA" in df.columns
+    assert "APPRDX" in df.columns
+
+    # Ensure that EVENT_IDs across tables have been properly merged
+    pat = df[df["PATNO"]=="9999"]
+    assert "V01" in pat["EVENT_ID"].tolist() # But no data other than AGE_AT_VISIT
+    assert "V04" in pat["EVENT_ID"].tolist() # AGE_AT_VISIT and Fam History
+    assert pat[pat["EVENT_ID"]=="V01"].shape[0] == 1 # Only one row
+    assert pat[pat["EVENT_ID"]=="V04"].shape[0] == 1 # Also only one row
+    assert not pd.isnull(pat[pat["EVENT_ID"]=="V01"]["AGE_AT_VISIT"].iloc[0])
+    assert pd.isnull(pat[pat["EVENT_ID"]=="V01"]["ANYFAMPD"].iloc[0])
+    assert not pd.isnull(pat[pat["EVENT_ID"]=="V04"]["AGE_AT_VISIT"].iloc[0])
+    assert not pd.isnull(pat[pat["EVENT_ID"]=="V04"]["ANYFAMPD"].iloc[0])
+
+    # Ensure columns have been deduplicated correctly. COHORT appears in 2 tables
+    assert "COHORT" in df.columns.tolist()
+    assert "COHORT_x" not in df.columns.tolist()
+    assert "COHORT_y" not in df.columns.tolist()
+    # If both one, they get merged to a single one with original type
+    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="BL")].iloc[0,:]["COHORT"] == 1
+    # Different values get merged into a pipe-separated string
+    # (Val from Subject_Cohort_History is a float because not all PATNOs appear in this
+    # table, so it includes NaNs and therefore must be float)
+    assert df[(df["PATNO"]=="9995")&(df["EVENT_ID"]=="BL")].iloc[0,:]["COHORT"] == "1|2.0"
+
+def test_empty_dir(caplog, tmp_path):
+    df = load_ppmi_subject_characteristics(tmp_path)
+
+    record = caplog.records[-1] # Last log message
+    assert record.levelname == "WARNING"
+    assert "No matching subject characteristics" in record.message
+    assert df.empty
+
+def test_missing_patno(caplog, tmp_path):
+    # Set up the empty PATNO file among others
+    shutil.copytree(f"{DATA_DIR}/{SUB_DIR}", tmp_path / SUB_DIR, dirs_exist_ok=True)
+    file = tmp_path / SUB_DIR / "Age_at_visit_21Test2025.csv"
+    tmp = pd.read_csv(file)
+    tmp = tmp.drop(columns="PATNO")
+    tmp.to_csv(file, index=False)
+
+    df = load_ppmi_subject_characteristics(tmp_path)
+
+    records = [r for r in caplog.records if "Age_at_visit" in r.message]
+    assert len(records) == 2, f"Should be 2 log records for Age_at_visit: found {len(records)}"
+
+    assert "Loading subject characteristics file" in records[0].message # normal loading msg
+    assert records[1].levelname == "WARNING"
+    assert "missing PATNO column, skipping" in records[1].message
+
+    # And the output shouldn't contain AGE_AT_VISIT
+    assert "AGE_AT_VISIT" not in df.columns.tolist()
