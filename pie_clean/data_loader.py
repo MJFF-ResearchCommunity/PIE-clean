@@ -214,97 +214,12 @@ class DataLoader:
         
         # Handle output for dictionary or merged DataFrame
         if merge_output:
-            logger.info("Loading and incrementally merging modalities into a single DataFrame")
-            
-            # Use a temporary dictionary to hold data just before merging
-            loaded_data = {}
-            all_pairs = set() # Still collect pairs to build the initial base_df
 
-            # First pass: Load data and collect all_pairs
+            # Merge data incrementally
+            merged_df = pd.DataFrame(list(all_pairs), columns=["PATNO", "EVENT_ID"])
             for modality in valid_modalities:
-                logger.info(f"Loading {modality} data...")
-                folder_path = os.path.join(data_path, FOLDER_PATHS[modality])
-                
-                if not os.path.exists(folder_path):
-                    logger.warning(f"Directory not found: {folder_path}")
-                    if modality == MEDICAL_HISTORY:
-                        loaded_data[modality] = {}
-                    # Store empty DF for non-found non-medical history to avoid key errors later
-                    elif modality != BIOSPECIMEN: 
-                         loaded_data[modality] = pd.DataFrame()
-                    continue
-
-                # Load data based on modality
-                data_to_process = None
-                if modality == SUBJECT_CHARACTERISTICS:
-                    data_to_process = load_ppmi_subject_characteristics(folder_path)
-                    loaded_data[modality] = data_to_process
-                elif modality == MEDICAL_HISTORY:
-                    med_hist_data = load_ppmi_medical_history(folder_path)
-                    if clean_data and med_hist_data:
-                        med_hist_data = DataPreprocessor.clean_medical_history(med_hist_data)
-                    loaded_data[modality] = med_hist_data
-                    data_to_process = med_hist_data # Process this dict below
-                elif modality == MOTOR_ASSESSMENTS:
-                    data_to_process = load_ppmi_motor_assessments(folder_path)
-                    loaded_data[modality] = data_to_process
-                elif modality == NON_MOTOR_ASSESSMENTS:
-                    data_to_process = load_ppmi_non_motor_assessments(folder_path)
-                    loaded_data[modality] = data_to_process
-                elif modality == BIOSPECIMEN:
-                    logger.debug(f"Calling load_biospecimen_data with exclude={biospec_exclude}")
-                    data_to_process = load_biospecimen_data(data_path, source, exclude=biospec_exclude)
-                    loaded_data[modality] = data_to_process
-                    # Biospecimen often returns a dict, handle below
-
-                logger.info(f"Loaded {modality}")
-
-                # Collect PATNO/EVENT_ID pairs
-                if isinstance(data_to_process, pd.DataFrame):
-                    if not data_to_process.empty and "PATNO" in data_to_process.columns and "EVENT_ID" in data_to_process.columns:
-                        unique_pairs_df = data_to_process[["PATNO", "EVENT_ID"]].drop_duplicates()
-                        new_pairs = set(map(lambda x: (str(x[0]), x[1]), unique_pairs_df.itertuples(index=False, name=None)))
-                        all_pairs.update(new_pairs)
-                        del unique_pairs_df, new_pairs
-                        gc.collect()
-                elif isinstance(data_to_process, dict): # Handles Medical History and Biospecimen (if not merged yet)
-                     for key, df_or_dict in data_to_process.items():
-                         # Handle nested dicts for biospecimen if needed
-                         if isinstance(df_or_dict, dict): 
-                              for sub_key, df in df_or_dict.items():
-                                   if isinstance(df, pd.DataFrame) and not df.empty and "PATNO" in df.columns and "EVENT_ID" in df.columns:
-                                        unique_pairs_df = df[["PATNO", "EVENT_ID"]].drop_duplicates()
-                                        new_pairs = set(map(lambda x: (str(x[0]), x[1]), unique_pairs_df.itertuples(index=False, name=None)))
-                                        all_pairs.update(new_pairs)
-                                        del unique_pairs_df, new_pairs
-                                        gc.collect()
-                         elif isinstance(df_or_dict, pd.DataFrame):
-                             df = df_or_dict
-                             if not df.empty and "PATNO" in df.columns and "EVENT_ID" in df.columns:
-                                 unique_pairs_df = df[["PATNO", "EVENT_ID"]].drop_duplicates()
-                                 new_pairs = set(map(lambda x: (str(x[0]), x[1]), unique_pairs_df.itertuples(index=False, name=None)))
-                                 all_pairs.update(new_pairs)
-                                 del unique_pairs_df, new_pairs
-                                 gc.collect()
-            
-            # Create the base DataFrame
-            if not all_pairs:
-                 logger.warning("No PATNO/EVENT_ID pairs found across any modalities. Returning empty DataFrame.")
-                 return pd.DataFrame()
-                 
-            base_df = pd.DataFrame(list(all_pairs), columns=["PATNO", "EVENT_ID"])
-            # Optional: Convert types for efficiency before merging
-            # base_df['PATNO'] = base_df['PATNO'].astype('category') 
-            # base_df['EVENT_ID'] = base_df['EVENT_ID'].astype('category')
-            logger.info(f"Created base DataFrame with {len(base_df)} unique PATNO/EVENT_ID pairs")
-            merged_df = base_df.copy()
-            del base_df, all_pairs # Free memory
-            gc.collect()
-
-            # Second pass: Merge data incrementally
-            for modality in valid_modalities:
-                data = loaded_data.get(modality)
-                if data is None: # Should not happen if we store empty DFs above
+                data = data_dict.get(modality)
+                if data is None:
                      logger.warning(f"No data loaded for modality {modality}, skipping merge.")
                      continue
 
@@ -366,8 +281,8 @@ class DataLoader:
                         gc.collect()
                 
                 # Remove the modality from the temporary dictionary after merging
-                if modality in loaded_data:
-                     del loaded_data[modality]
+                if modality in data_dict:
+                     del data_dict[modality]
                      gc.collect()
 
 

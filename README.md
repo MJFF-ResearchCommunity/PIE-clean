@@ -53,6 +53,8 @@ To verify your setup and ensure all components are working correctly, you can ru
 pytest tests
 ```
 
+For the purposes of testing, there are mocked-up versions of PPMI data files in `tests/test_data/`. Please note that this data follows the same structure as real PPMI files (column names, value types, and representative ranges on values), but the data IS NOT from real participants, and the values in the files are fabricated. These files exist so that the tests can ensure correct functionality, but you must [apply for access to the PPMI data](https://www.ppmi-info.org/access-data-specimens/download-data) to get real patient data.
+
 ## Contributing
 Contributions are welcome! Please follow these steps:
 1. Fork the repository.

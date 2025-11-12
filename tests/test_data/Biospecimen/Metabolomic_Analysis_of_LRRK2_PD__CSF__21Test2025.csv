@@ -1,0 +1,5 @@
+﻿PATNO,SEX,COHORT,CLINICAL_EVENT,TYPE,TESTNAME,TESTVALUE,UNITS,RUNDATE,PROJECTID,PI_NAME,PI_INSTITUTION,update_stamp
+9999,Male,PD,V06,Cerebrospinal Fluid,(3-O-sulfo)GalCer(d18:1/16:0),0.001234,adjusted_area_ratio,2017-02-01,180,Jane Doe,Company Inc,2025-08-22 16:02
+9999,Male,PD,V06,Cerebrospinal Fluid,(3-O-sulfo)GalCer(d18:1/16:0),0.002345,area_ratio,2017-02-01,180,Jane Doe,Company Inc,2025-08-22 16:02
+9998,Female,PD,V06,Cerebrospinal Fluid,(3-O-sulfo)GalCer(d18:1/16:0),0.001234,adjusted_area_ratio,2016-02-01,180,Jane Doe,Company Inc,2025-08-22 16:02
+9998,Female,PD,V06,Cerebrospinal Fluid,(3-O-sulfo)GalCer(d18:1/16:0),0.002345,area_ratio,2016-02-01,180,Jane Doe,Company Inc,2025-08-22 16:02
