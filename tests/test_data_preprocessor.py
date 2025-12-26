@@ -1,17 +1,26 @@
-"""
-test_data_preprocessor.py
-
-Tests for the data preprocessor module.
-"""
-
+import logging
 import pytest
 import numpy as np
 import pandas as pd
 from pie_clean import *
 
+logging.getLogger("PIE").setLevel(logging.DEBUG)
+DATA_DIR = "tests/test_data"
+
 @pytest.fixture()
 def data_dict():
-    return DataLoader.load(clean_data=False)
+    # Load a dataset with no preprocessing,
+    # excluding some of the larger biospecs
+    biospec_exclude = ['project_9000', 'project_222', 'project_196']
+    logging.getLogger("PIE").setLevel(logging.ERROR)
+    data_dict = DataLoader.load(
+        data_path=DATA_DIR,
+        biospec_exclude=biospec_exclude,
+        merge_output=False,
+        clean_data=False
+    )
+    logging.getLogger("PIE").setLevel(logging.DEBUG)
+    return data_dict
 
 def test_clean(data_dict):
     clean_dict = DataPreprocessor.clean(data_dict)
@@ -98,6 +107,29 @@ def test_clean_ledd_meds(data_dict):
     # Cleaning should remove some of the nulls (although unfortunately not all)
     assert clean_df["LEDD"].isnull().sum() < \
         data_dict[MEDICAL_HISTORY]["LEDD_Concomitant_Medication"]["LEDD"].isnull().sum()
+    # This one can't be converted
+    assert pd.isnull(clean_df[clean_df["LEDTRT"]=="LEVODOPA"]["LEDD"].iloc[0])
+    # Specific translated values
+    assert clean_df[clean_df["LEDTRT"]=="Safinamide"]["LEDD"].iloc[0] == 150
+    assert clean_df[clean_df["LEDTRT"]=="Trihexiphenidyl"]["LEDD"].iloc[0] == 100
+    assert clean_df[clean_df["LEDTRT"]=="Duopa"]["LEDD"].iloc[0] == 1.1 * 5*3*2
+    assert clean_df[clean_df["LEDTRT"]=="Inbrija"]["LEDD"].iloc[0] == 0.69 * 5*3*2
+    assert clean_df[clean_df["LEDTRT"]=="Benserazide"]["LEDD"].iloc[0] == 0.85 * 5*3*2
+    assert clean_df[clean_df["LEDTRT"]=="Istradefylline"]["LEDD"].iloc[0] == "LD x 0.2"
+    assert clean_df[clean_df["LEDTRT"]=="Tolcapone"]["LEDD"].iloc[0] == "LD x 0.5"
+    assert clean_df[clean_df["LEDTRT"]=="Entacapone"]["LEDD"].iloc[0] == "LD x 0.33"
+    # Complex calculations
+    assert clean_df[(clean_df["LEDTRT"]=="Selegiline")&
+                    (clean_df["LEDDOSSTR"]=="PO")]["LEDD"].iloc[0] == 10 * 5*3*2
+    assert clean_df[(clean_df["LEDTRT"]=="Selegiline")&
+                    (clean_df["LEDDOSSTR"]=="Sublingual")]["LEDD"].iloc[0] == 80 * 5*3*2
+    assert pd.isnull(clean_df[(clean_df["LEDTRT"]=="Selegiline")&
+                              clean_df["LEDDOSSTR"].isnull()]["LEDD"].iloc[0])
+    assert clean_df[clean_df["LEDTRT"]=="Apomorphine film"]["LEDD"].iloc[0] == 1.5 * 5*3*2
+    assert clean_df[clean_df["LEDTRT"]=="Apomorphine pen"]["LEDD"].iloc[0] == 10 * 5*3*2
+    # Various levodopas
+    assert clean_df[clean_df["LEDTRT"]=="Levodopa ER"]["LEDD"].iloc[0] == 0.5 * 5*3*2
+    assert clean_df[clean_df["LEDTRT"]=="Levodopa CR"]["LEDD"].iloc[0] == 0.75 * 5*3*2
 
 @pytest.mark.skip(reason="Don't recreate every time")
 def test_create_concomitant_meds(data_dict):

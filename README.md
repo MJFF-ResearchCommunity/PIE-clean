@@ -11,17 +11,19 @@ If you want to explore and clean the PPMI data, it is recommended that you work 
 
 ### Prerequisites
 - Python 3.8 or later.
-- Required dependencies can be installed from `requirements.txt`:
-  ```bash
-  pip install -r requirements.txt
-  ```
 
 ### Installation
-Clone the repository and install the PIE package. For development, use the editable "`-e`" flag.
+Clone the repository, install the requirements, and install the PIE package. For development, use the editable "`-e`" flag.
 ```bash
 git clone https://github.com/MJFF-ResearchCommunity/PIE-clean.git
 cd PIE-clean
+pip install -r requirements.txt
 pip install -e .
+```
+
+If you want to double check that installation worked, you can run the test suite and verify that there are no errors:
+```
+pytest
 ```
 
 ### Data Setup
