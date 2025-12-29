@@ -34,18 +34,18 @@ def test_clean_features_of_parkinsonism(data_dict):
     clean_df = DataPreprocessor.clean_features_of_parkinsonism(
             data_dict[MEDICAL_HISTORY]["Features_of_Parkinsonism"])
 
-    assert "FEATBRADY" in clean_df
+    assert "FEATRIGID" in clean_df
     # There should be no more Uncertain values of 2
     assert (clean_df["FEATBRADY"]!=2).all()
-    assert (data_dict[MEDICAL_HISTORY]["Features_of_Parkinsonism"]["FEATBRADY"]==2).any()
+    assert (data_dict[MEDICAL_HISTORY]["Features_of_Parkinsonism"]["FEATRIGID"]==2).any()
 
     # Try passing NaN as the new value for Uncertain
     clean_df = DataPreprocessor.clean_features_of_parkinsonism(
             data_dict[MEDICAL_HISTORY]["Features_of_Parkinsonism"], uncertain=np.nan)
 
     # There should be no more Uncertain values of 2
-    count = (data_dict[MEDICAL_HISTORY]["Features_of_Parkinsonism"]["FEATBRADY"]==2).sum()
-    assert clean_df["FEATBRADY"].isnull().sum() >= count # might be some pre-existing NaNs
+    count = (data_dict[MEDICAL_HISTORY]["Features_of_Parkinsonism"]["FEATRIGID"]==2).sum()
+    assert clean_df["FEATRIGID"].isnull().sum() >= count # might be some pre-existing NaNs
 
 
 def test_clean_gen_physical_exam(data_dict):
@@ -82,8 +82,8 @@ def test_clean_vital_signs(data_dict):
 
 
 def test_clean_concomitant_meds(data_dict):
-    clean_df = DataPreprocessor.clean_concomitant_meds(
-            data_dict[MEDICAL_HISTORY]["Concomitant_Medication"])
+    orig_df = data_dict[MEDICAL_HISTORY]["Concomitant_Medication"]
+    clean_df = DataPreprocessor.clean_concomitant_meds(orig_df)
     assert "CMTRT" in clean_df.columns
 
     assert clean_df["CMTRT"].notnull().all() # All should have names
@@ -91,9 +91,27 @@ def test_clean_concomitant_meds(data_dict):
     assert np.issubdtype(clean_df["STOPDT"], np.datetime64) # Dates should be converted from string
 
     assert clean_df["CMINDC"].notnull().all() # After cleaning, all TEXT is mapped to indication code
-    counts = clean_df["CMINDC"].value_counts()
-    assert counts.index[0] == 25 # The most frequent mapping is 25: Other
-    assert counts.index[-1] == 21 # The least frequent mapping is 21: Drooling
+
+    ## Check some specific mappings
+    # Aspirin with no indication is for pain
+    assert pd.isnull(orig_df[clean_df["CMTRT"]=="ASPIRIN"].iloc[0]["CMINDC_TEXT"])
+    assert pd.isnull(orig_df[clean_df["CMTRT"]=="ASPIRIN"].iloc[0]["CMINDC"])
+    assert clean_df[clean_df["CMTRT"]=="ASPIRIN"].iloc[0]["CMINDC_TEXT"] == "Pain"
+    assert clean_df[clean_df["CMTRT"]=="ASPIRIN"].iloc[0]["CMINDC"] == 17
+    # Iron is a supplement
+    assert orig_df[clean_df["CMTRT"]=="IRON SUPPLEMENT"].iloc[0]["CMINDC_TEXT"] == "MILD ANEMIA"
+    assert pd.isnull(orig_df[clean_df["CMTRT"]=="IRON SUPPLEMENT"].iloc[0]["CMINDC"])
+    assert clean_df[clean_df["CMTRT"]=="IRON SUPPLEMENT"].iloc[0]["CMINDC_TEXT"] == "Supplements / Homeopathic Medication"
+    assert clean_df[clean_df["CMTRT"]=="IRON SUPPLEMENT"].iloc[0]["CMINDC"] == 22
+    # Calcium has a code, so check its text is now set
+    assert pd.isnull(orig_df[clean_df["CMTRT"]=="Calcium"].iloc[0]["CMINDC_TEXT"])
+    assert orig_df[clean_df["CMTRT"]=="Calcium"].iloc[0]["CMINDC"] == 22
+    assert clean_df[clean_df["CMTRT"]=="Calcium"].iloc[0]["CMINDC_TEXT"] == "Supplements / Homeopathic Medication"
+    # Amlopidine has text, so check its code is now set
+    assert orig_df[clean_df["CMTRT"]=="AMLODIPINE/VALSARTAN 5/320"].iloc[0]["CMINDC_TEXT"] == "HYPERTENSION"
+    assert pd.isnull(orig_df[clean_df["CMTRT"]=="AMLODIPINE/VALSARTAN 5/320"].iloc[0]["CMINDC"])
+    assert clean_df[clean_df["CMTRT"]=="AMLODIPINE/VALSARTAN 5/320"].iloc[0]["CMINDC_TEXT"] == "Hypertension"
+    assert clean_df[clean_df["CMTRT"]=="AMLODIPINE/VALSARTAN 5/320"].iloc[0]["CMINDC"] == 14
 
 def test_clean_ledd_meds(data_dict):
     clean_df = DataPreprocessor.clean_ledd_meds(
