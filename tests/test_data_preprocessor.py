@@ -49,11 +49,12 @@ def test_clean_features_of_parkinsonism(data_dict):
 
 
 def test_clean_gen_physical_exam(data_dict):
-    clean_df = DataPreprocessor.clean_gen_physical_exam(
-            data_dict[MEDICAL_HISTORY]["General_Physical_Exam"])
+    orig_df = data_dict[MEDICAL_HISTORY]["General_Physical_Exam"]
+    clean_df = DataPreprocessor.clean_gen_physical_exam(orig_df)
 
     assert "ABNORM" in clean_df
     # There should be no more Could Not Assess values of 2
+    assert (orig_df["ABNORM"]==2).any()
     assert (clean_df["ABNORM"]!=2).all()
     assert (data_dict[MEDICAL_HISTORY]["General_Physical_Exam"]["ABNORM"]==2).any()
 
@@ -80,6 +81,12 @@ def test_clean_vital_signs(data_dict):
     assert "Stnd BP code" in clean_df
     assert "Stnd BP label" in clean_df
 
+    # Test specific mappings
+    assert clean_df[(clean_df["PATNO"]==9999)&(clean_df["EVENT_ID"]=="SC")].iloc[0,:]["Sup BP code"] == 0
+    assert clean_df[(clean_df["PATNO"]==9999)&(clean_df["EVENT_ID"]=="BL")].iloc[0,:]["Sup BP code"] == 1
+    assert clean_df[(clean_df["PATNO"]==9999)&(clean_df["EVENT_ID"]=="V01")].iloc[0,:]["Sup BP code"] == 2
+    assert clean_df[(clean_df["PATNO"]==9998)&(clean_df["EVENT_ID"]=="BL")].iloc[0,:]["Stnd BP code"] == 3
+    assert clean_df[(clean_df["PATNO"]==9998)&(clean_df["EVENT_ID"]=="SC")].iloc[0,:]["Sup BP code"] == 4
 
 def test_clean_concomitant_meds(data_dict):
     orig_df = data_dict[MEDICAL_HISTORY]["Concomitant_Medication"]
