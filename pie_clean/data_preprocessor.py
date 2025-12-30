@@ -91,15 +91,20 @@ class DataPreprocessor:
     @staticmethod
     def clean_medical_history(med_hist_dict):
         # TODO: Add individual column cleaning functions as implemented
-        med_hist_dict["LEDD_Concomitant_Medication"] = DataPreprocessor.clean_ledd_meds(
+        if "LEDD_Concomitant_Medication" in med_hist_dict:
+            med_hist_dict["LEDD_Concomitant_Medication"] = DataPreprocessor.clean_ledd_meds(
                 med_hist_dict["LEDD_Concomitant_Medication"])
-        med_hist_dict["Concomitant_Medication"] = DataPreprocessor.clean_concomitant_meds(
+        if "Concomitant_Medication" in med_hist_dict:
+            med_hist_dict["Concomitant_Medication"] = DataPreprocessor.clean_concomitant_meds(
                 med_hist_dict["Concomitant_Medication"])
-        med_hist_dict["Vital_Signs"] = DataPreprocessor.clean_vital_signs(
+        if "Vital_Signs" in med_hist_dict:
+            med_hist_dict["Vital_Signs"] = DataPreprocessor.clean_vital_signs(
                 med_hist_dict["Vital_Signs"])
-        med_hist_dict["Features_of_Parkinsonism"] = DataPreprocessor.clean_features_of_parkinsonism(
+        if "Features_of_Parkinsonism" in med_hist_dict:
+            med_hist_dict["Features_of_Parkinsonism"] = DataPreprocessor.clean_features_of_parkinsonism(
                 med_hist_dict["Features_of_Parkinsonism"])
-        med_hist_dict["General_Physical_Exam"] = DataPreprocessor.clean_gen_physical_exam(
+        if "General_Physical_Exam" in med_hist_dict:
+            med_hist_dict["General_Physical_Exam"] = DataPreprocessor.clean_gen_physical_exam(
                 med_hist_dict["General_Physical_Exam"])
         return med_hist_dict
 
@@ -218,7 +223,7 @@ class DataPreprocessor:
         elif "piri" in name:
             return DataPreprocessor._calc_dose_value(row) # no scaling
         elif ("apomorph" in name and "pen" in name) or \
-             ("seleg" in name and "PO" in row["LEDDOSSTR"]): # oral route only
+             ("seleg" in name and "PO" in str(row["LEDDOSSTR"])): # oral route only
             return 10 * DataPreprocessor._calc_dose_value(row)
         elif ("apomorph" in name and "film" in name) or "kynmobi" in name:
             return 1.5 * DataPreprocessor._calc_dose_value(row)

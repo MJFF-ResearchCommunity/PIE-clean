@@ -27,4 +27,4 @@ FOLDER_PATHS = {
     MOTOR_ASSESSMENTS: "Motor___MDS-UPDRS",
     NON_MOTOR_ASSESSMENTS: "Non-motor_Assessments",
     BIOSPECIMEN: "Biospecimen"
-} 
+}
