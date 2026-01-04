@@ -8,7 +8,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pie_clean.med_hist_loader import (
-    load_ppmi_medical_history, sanitize_suffixes_in_df,
+    load_ppmi_medical_history,
     MEDICAL_HISTORY_PREFIXES
 )
 
@@ -16,7 +16,7 @@ logging.getLogger("PIE").setLevel(logging.DEBUG)
 DATA_DIR = "tests/test_data"
 SUB_DIR = "Medical_History"
 
-load_msg = f"Loading medical history file: {DATA_DIR}/{SUB_DIR}"
+load_msg = f"Loading medical_history file: {DATA_DIR}/{SUB_DIR}"
 
 def test_load_ppmi_medical_history(caplog):
     # Returns dict of dfs, not a merged df
@@ -53,24 +53,6 @@ def test_empty_dir(caplog, tmp_path):
 
     record = caplog.records[-1] # Last log message
     assert record.levelname == "WARNING"
-    assert "No matching medical history" in record.message
+    assert "No matching medical_history" in record.message
     assert len(df_dict) == 0, "Expected empty dict, contains {len(df_dict)} items"
-
-def test_sanitize_suffixes(caplog):
-    # Set up a table with "_x" and "_y" columns
-    tmp = pd.read_csv(f"{DATA_DIR}/{SUB_DIR}/General_Physical_Exam_21Test2025.csv")
-    c1, c2 = "TEST", "TEST2"
-    tmp[f"{c1}_x"] = [0] * tmp.shape[0]
-    tmp[f"{c1}_y"] = [1] * tmp.shape[0]
-    tmp[f"{c2}_y"] = [2] * tmp.shape[0]
-
-    sanitize_suffixes_in_df(tmp) # operates in place
-    assert f"{c1}_x" not in tmp.columns.tolist()
-    assert f"{c1}_y" not in tmp.columns.tolist()
-    assert f"{c2}_y" not in tmp.columns.tolist()
-    assert f"{c1}_col" in tmp.columns
-    assert f"{c1}_col1" in tmp.columns
-    assert tmp[f"{c1}_col"].iloc[0] == 0 # First in iloc order gets "_col"
-    assert tmp[f"{c1}_col1"].iloc[0] == 1 # Second gets "_col1"
-    assert f"{c2}_col" in tmp.columns # Third is a different name, so "_col"
 

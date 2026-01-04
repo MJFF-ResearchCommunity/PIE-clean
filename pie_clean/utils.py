@@ -1,4 +1,6 @@
+import glob
 import logging
+import os
 import pandas as pd
 import numpy as np
 
@@ -162,3 +164,152 @@ def general_deduplicate_suffixed_columns(df: pd.DataFrame) -> pd.DataFrame:
             logger.debug(f"Renaming {col_y} to {base_col_name}")
             df.rename(columns={col_y: base_col_name}, inplace=True)
     return df
+
+def sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
+    """
+    Rename columns in df if they already end with '_x' or '_y'.
+    For example:
+      'SUB_EVENT_ID_x' -> 'SUB_EVENT_ID_x_col'
+      'SUB_EVENT_ID_y' -> 'SUB_EVENT_ID_y_col'
+    If 'SUB_EVENT_ID_x_col' also exists, keep incrementing => 'SUB_EVENT_ID_x_col1', etc.
+    """
+    rename_map = {}
+    for col in df.columns:
+        if col.endswith("_x") or col.endswith("_y"):
+            base = col  # e.g. 'SUB_EVENT_ID_x'
+            # Chop off the last two chars ('_x' or '_y') and append '_col'
+            new_base = base[:-2] + "_col"  # e.g. 'SUB_EVENT_ID_col'
+            new_col = new_base
+
+            # If that new_col also exists, keep incrementing
+            count = 1
+            while new_col in df.columns or new_col in rename_map.values():
+                new_col = f"{new_base}{count}"
+                count += 1
+
+            rename_map[col] = new_col
+
+    if rename_map:
+        df.rename(columns=rename_map, inplace=True)
+
+def load_all_files(
+    folder_path: str,
+    file_prefixes: List[str],
+    modality: str,
+    merge: bool = False
+):
+    data_dict = {}
+
+    all_csv_files = list(glob.iglob(os.path.join(folder_path, "**/*.csv"), recursive=True))
+
+    for prefix in file_prefixes:
+        matching_files = [f for f in all_csv_files if os.path.basename(f).startswith(prefix)]
+        if not matching_files:
+            logger.debug(f"{modality}: No CSV file found for prefix: {prefix} in {folder_path}")
+            continue
+
+        for csv_file_path in sorted(matching_files):
+            try:
+                logger.debug(f"Loading {modality} file: {csv_file_path}")
+                df_temp = pd.read_csv(csv_file_path, low_memory=False)
+            except Exception as e:
+                logger.error(f"{modality}: Could not read file '{csv_file_path}': {e}")
+                continue
+
+            if "PATNO" not in df_temp.columns:
+                logger.warning(f"{modality} file {csv_file_path} is missing PATNO column, skipping.")
+                continue
+
+            # Standardize PATNO to string early
+            df_temp['PATNO'] = df_temp['PATNO'].astype(str)
+
+            # 1) Rename any leftover _x / _y columns in df_temp
+            sanitize_suffixes_in_df(df_temp)
+
+            # Store for later with a good key
+            filename = os.path.basename(csv_file_path)
+            # Take off date and ".csv" from the end
+            filename = "_".join(filename.split("_")[:-1])
+            if filename in data_dict:
+                logger.warning(f"{modality}: unexpected duplicate filename {filename} found: dropping one")
+            data_dict[filename] = df_temp
+
+    if len(data_dict) == 0:
+        logger.warning(f"No matching {modality} CSV files were successfully loaded. Returning empty DataFrame.")
+        return pd.DataFrame()
+
+    # Now we have all the data loaded
+    if not merge:
+        logger.info(f"{modality}: Returning dict of {len(data_dict)} files")
+        return data_dict
+
+    df_merged = None
+    for i, key in enumerate(data_dict):
+        if i == 0:
+            df_merged = data_dict[key]
+            continue
+
+        merge_keys = ["PATNO"]
+        df_temp = data_dict[key]
+        if "EVENT_ID" in df_merged and "EVENT_ID" in df_temp:
+            logger.debug(f"Merging {modality} {key} on PATNO and EVENT_ID")
+            merge_keys.append("EVENT_ID")
+        elif "EVENT_ID" in df_merged:
+            logger.debug(f"Merging {modality} {key} on PATNO only (it lacks EVENT_ID)")
+        else:
+            logger.debug(f"Merging {modality} {key} on PATNO only (pre-existing df_merged lacks EVENT_ID)")
+
+        try:
+            df_merged = pd.merge(df_merged, df_temp, on=merge_keys, how="outer", suffixes=("_x", "_y"))
+            df_merged = general_deduplicate_suffixed_columns(df_merged)
+        except Exception as e:
+            logger.error(f"Error merging {key} into df_merged: {e}")
+            logger.error(f"df_merged columns: {df_merged.columns.tolist()}")
+            logger.error(f"df_temp columns: {df_temp.columns.tolist()}")
+            logger.error(f"Merge keys: {merge_keys}")
+            continue # Skip this file if merge fails
+
+    if df_merged.empty:
+        logger.warning("No {modality} CSV files were successfully merged. Returning empty DataFrame.")
+        return pd.DataFrame()
+
+    # 1. Resolve _x, _y suffixed columns resulting from merges
+    # 2. Ensure (PATNO, EVENT_ID) uniqueness by aggregating rows
+    # This step must happen after all files are merged and _x/_y columns are resolved.
+    if "EVENT_ID" in df_merged.columns:
+        logger.debug(f"Aggregating rows to ensure unique (PATNO, EVENT_ID) pairs for {modality}...")
+        df_merged = aggregate_by_patno_eventid(df_merged, modality)
+    else:
+        logger.warning(f"EVENT_ID column not found in the final merged {modality} DataFrame. "
+                       "Ensuring PATNO uniqueness only if duplicates exist.")
+        if "PATNO" in df_merged.columns and df_merged.duplicated(subset=["PATNO"]).any():
+             # For PATNO-only aggregation, we'll use the same logic
+             logger.info(
+                f"{modality}: Consolidating rows with duplicate PATNO "
+                "by combining unique non-null values for other columns."
+             )
+             # Temporarily rename PATNO for the groupby function if EVENT_ID is missing
+             # This is a bit of a hack to reuse the same aggregate_by_patno_eventid logic
+             # Or better, adapt aggregate_by_patno_eventid to handle single key
+
+             # Simplified aggregation for PATNO only if EVENT_ID is missing
+             def combine_patno_only_series(series):
+                unique_non_null_strs = series.dropna().astype(str).unique()
+                if len(unique_non_null_strs) == 0: return np.nan
+                if len(unique_non_null_strs) == 1:
+                    original_non_null_values = series.dropna()
+                    if original_non_null_values.nunique() == 1:
+                        return original_non_null_values.iloc[0]
+                    return unique_non_null_strs[0]
+                return "|".join(sorted(unique_non_null_strs))
+
+             agg_cols_patno = [col for col in df_merged.columns if col != "PATNO"]
+             if agg_cols_patno:
+                 agg_dict_patno = {col: combine_patno_only_series for col in agg_cols_patno}
+                 df_merged['PATNO'] = df_merged['PATNO'].astype(str)
+                 df_merged = df_merged.groupby("PATNO", as_index=False).agg(agg_dict_patno)
+             else: # Only PATNO column exists
+                 df_merged = df_merged.drop_duplicates(subset=["PATNO"], keep='first')
+
+    logger.info(f"Final loaded {modality} shape: {df_merged.shape}")
+    return df_merged

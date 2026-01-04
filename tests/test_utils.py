@@ -113,3 +113,22 @@ def test_general_dedup_suffixed_cols(caplog):
     assert (df[both_col] == "01/2015|01/2025").all()
     assert (df[x_col] == "01/2015").all()
     assert (df[y_col] == 1.234).all()
+
+def test_sanitize_suffixes(caplog):
+    # Set up a table with "_x" and "_y" columns
+    SUB_DIR = "Medical_History"
+    tmp = pd.read_csv(f"{DATA_DIR}/{SUB_DIR}/General_Physical_Exam_21Test2025.csv")
+    c1, c2 = "TEST", "TEST2"
+    tmp[f"{c1}_x"] = [0] * tmp.shape[0]
+    tmp[f"{c1}_y"] = [1] * tmp.shape[0]
+    tmp[f"{c2}_y"] = [2] * tmp.shape[0]
+
+    sanitize_suffixes_in_df(tmp) # operates in place
+    assert f"{c1}_x" not in tmp.columns.tolist()
+    assert f"{c1}_y" not in tmp.columns.tolist()
+    assert f"{c2}_y" not in tmp.columns.tolist()
+    assert f"{c1}_col" in tmp.columns
+    assert f"{c1}_col1" in tmp.columns
+    assert tmp[f"{c1}_col"].iloc[0] == 0 # First in iloc order gets "_col"
+    assert tmp[f"{c1}_col1"].iloc[0] == 1 # Second gets "_col1"
+    assert f"{c2}_col" in tmp.columns # Third is a different name, so "_col"
