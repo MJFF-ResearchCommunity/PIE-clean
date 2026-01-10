@@ -33,9 +33,9 @@ def test_load_ppmi_medical_history(caplog):
         if "General_Physical_Exam" in record.message:
             # One and only one message, for loading
             assert f"{load_msg}/General_Physical_Exam" in record.message
-        if "LEDD_Concomitant_Medication" in record.message:
+        if "LEDD_Concomitant_Medication_Log" in record.message:
             # One and only one message, for loading
-            assert f"{load_msg}/LEDD_Concomitant_Medication" in record.message
+            assert f"{load_msg}/LEDD_Concomitant_Medication_Log" in record.message
         if "Vital_Signs" in record.message:
             # One and only one message, for loading
             assert f"{load_msg}/Vital_Signs" in record.message
@@ -43,8 +43,8 @@ def test_load_ppmi_medical_history(caplog):
     # We expect to see every table in the output
     assert "General_Physical_Exam" in df_dict
     assert "PECAT" in df_dict["General_Physical_Exam"].columns
-    assert "LEDD_Concomitant_Medication" in df_dict
-    assert "LEDTRT" in df_dict["LEDD_Concomitant_Medication"].columns
+    assert "LEDD_Concomitant_Medication_Log" in df_dict
+    assert "LEDTRT" in df_dict["LEDD_Concomitant_Medication_Log"].columns
     assert "Vital_Signs" in df_dict
     assert "SYSSUP" in df_dict["Vital_Signs"].columns
 

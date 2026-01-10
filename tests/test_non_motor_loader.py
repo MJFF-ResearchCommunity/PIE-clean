@@ -15,7 +15,7 @@ logging.getLogger("PIE").setLevel(logging.DEBUG)
 DATA_DIR = "tests/test_data"
 SUB_DIR = "Non-motor_Assessments" 
 
-load_msg = f"Loading non-motor assessment file: {DATA_DIR}/{SUB_DIR}"
+load_msg = f"Loading non_motor_assessments file: {DATA_DIR}/{SUB_DIR}"
 
 def test_load_ppmi_non_motor_assessments(caplog):
     df = load_ppmi_non_motor_assessments(DATA_DIR)
@@ -32,9 +32,10 @@ def test_load_ppmi_non_motor_assessments(caplog):
             # One and only one message, for loading
             assert f"{load_msg}/Montreal_Cognitive_Assessment" in record.message
         elif "Neuro_QoL" in record.message:
-            # Load only the Non-motor versions of Neuro_QoL, not the Motor versions
+            # Load (and merge) only the Non-motor versions of Neuro_QoL, not the Motor versions
             assert f"{load_msg}/Neuro_QoL__Cognition" in record.message or\
-                   f"{load_msg}/Neuro_QoL__Communication" in record.message
+                   f"{load_msg}/Neuro_QoL__Communication" in record.message or\
+                    "on PATNO and EVENT_ID" in record.message
             # We've mocked both, so they must be actually loaded
             assert f"{load_msg}/Neuro_QoL__Cognition" in caplog.text
             assert f"{load_msg}/Neuro_QoL__Communication" in caplog.text
@@ -74,7 +75,7 @@ def test_empty_dir(caplog, tmp_path):
 
     record = caplog.records[-1] # Last log message
     assert record.levelname == "WARNING"
-    assert "No matching non-motor assessment CSV files" in record.message
+    assert "No matching non_motor_assessments CSV files" in record.message
     assert df.empty
 
 def test_missing_patno(caplog, tmp_path):
@@ -91,7 +92,7 @@ def test_missing_patno(caplog, tmp_path):
     records = [r for r in caplog.records if testfile in r.message]
     assert len(records) == 2, f"Should be 2 log records for {testfile}: found {len(records)}"
 
-    assert "Loading non-motor assessment file" in records[0].message # normal loading msg
+    assert "Loading non_motor_assessments file" in records[0].message # normal loading msg
     assert records[1].levelname == "WARNING"
     assert "missing PATNO column, skipping" in records[1].message
 
