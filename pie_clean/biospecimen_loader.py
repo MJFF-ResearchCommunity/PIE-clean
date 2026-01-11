@@ -368,69 +368,6 @@ def load_urine_proteomics(folder_path: str) -> pd.DataFrame:
         logger.error(f"Error pivoting data: {e}")
         return pd.DataFrame()
 
-def load_project_9000(folder_path: str) -> pd.DataFrame:
-    """
-    Load and process PPMI_Project_9000 data files.
-
-    This function:
-    1. Finds all files with the prefix "PPMI_Project_9000"
-    2. For each unique UNIPROT-ASSAY combination, creates three columns:
-       - UNIPROT_ASSAY_MISSINGFREQ
-       - UNIPROT_ASSAY_LOD
-       - UNIPROT_ASSAY_NPX
-    3. Adds "9000_" prefix to each created column
-    4. Keeps only PATNO, EVENT_ID, and the newly created columns
-    5. Removes "PPMI-" prefix from PATNO values
-    
-    Args:
-        folder_path: Path to the Biospecimen folder containing the CSV files
-
-    Returns:
-        A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
-    """
-    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["PPMI_Project_9000"])
-
-    if not matching_files:
-        logger.warning(f"No PPMI_Project_9000 files found in {folder_path}")
-        return pd.DataFrame()
-
-    result_df = _process_npx_files(matching_files, "9000")
-    if not result_df.empty:
-        logger.info(f"Successfully processed Project 9000 data: {len(result_df)} rows, {len(result_df.columns)} columns")
-    return result_df
-
-
-def load_project_222(folder_path: str) -> pd.DataFrame:
-    """
-    Load and process PPMI_Project_222 data files.
-    
-    This function:
-    1. Finds all files with the prefix "PPMI_Project_222"
-    2. For each unique UNIPROT-ASSAY combination, creates three columns:
-       - UNIPROT_ASSAY_MISSINGFREQ
-       - UNIPROT_ASSAY_LOD
-       - UNIPROT_ASSAY_NPX
-    3. Adds "222_" prefix to each created column
-    4. Keeps only PATNO, EVENT_ID, and the newly created columns
-    5. Removes "PPMI-" prefix from PATNO values
-    
-    Args:
-        folder_path: Path to the Biospecimen folder containing the CSV files
-    
-    Returns:
-        A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
-    """
-    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["PPMI_Project_222"])
-
-    if not matching_files:
-        logger.warning(f"No PPMI_Project_222 files found in {folder_path}")
-        return pd.DataFrame()
-
-    result_df = _process_npx_files(matching_files, "222")
-    if not result_df.empty:
-        logger.info(f"Successfully processed Project 222 data: {len(result_df)} rows, {len(result_df.columns)} columns")
-    return result_df
-
 
 def load_project_196(folder_path: str) -> pd.DataFrame:
     """
@@ -1052,6 +989,11 @@ TEST_FILES = {
     "current_biospecimen": ["Current_Biospecimen_Analysis_Results", "Current_Biospecimen_Analysis", "BIO"],
 }
 
+NPX_FILES = {
+    "project_9000": ["PPMI_Project_9000", "9000"],
+    "project_222": ["PPMI_Project_222", "222"],
+}
+
 def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = None) -> dict:
     """
     Load biospecimen data from the specified path.
@@ -1112,6 +1054,27 @@ def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = 
         except Exception as e:
             logger.error(f"Error loading {fprefix} data: {e}")
 
+    # The second file format is NPX
+    for key in NPX_FILES:
+        if key in exclude:
+            logger.info(f"Skipping {key} (excluded)")
+            continue
+
+        try:
+            fprefix, col_prefix = NPX_FILES[key]
+            matching_files = find_all_files(BIOSPECIMEN, biospecimen_path, [fprefix])
+
+            if not matching_files:
+                logger.warning(f"No {key} files found in {biospecimen_path}")
+                continue
+
+            result_df = _process_npx_files(matching_files, col_prefix)
+            if not result_df.empty:
+                logger.info(f"Successfully processed {key} data: {len(result_df)} rows, {len(result_df.columns)} columns")
+                biospecimen_data[key] = result_df
+        except Exception as e:
+            logger.error(f"Error loading {fprefix} data: {e}")
+
     # Load Targeted___untargeted_MS-based_proteomics_of_urine_in_PD data
     if "urine_proteomics" not in exclude:
         try:
@@ -1123,27 +1086,6 @@ def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = 
     else:
         logger.info("Skipping urine proteomics (excluded)")
 
-    # Load PPMI_Project_9000 data
-    if "project_9000" not in exclude:
-        try:
-            biospecimen_data["project_9000"] = load_project_9000(biospecimen_path)
-            logger.info(f"Loaded Project 9000 data: {len(biospecimen_data['project_9000'])} rows")
-        except Exception as e:
-            logger.error(f"Error loading Project 9000 data: {e}")
-            biospecimen_data["project_9000"] = pd.DataFrame()
-    else:
-        logger.info("Skipping Project 9000 (excluded)")
-
-    # Load PPMI_Project_222 data
-    if "project_222" not in exclude:
-        try:
-            biospecimen_data["project_222"] = load_project_222(biospecimen_path)
-            logger.info(f"Loaded Project 222 data: {len(biospecimen_data['project_222'])} rows")
-        except Exception as e:
-            logger.error(f"Error loading Project 222 data: {e}")
-            biospecimen_data["project_222"] = pd.DataFrame()
-    else:
-        logger.info("Skipping Project 222 (excluded)")
 
     # Load PPMI_Project_196 data
     if "project_196" not in exclude:

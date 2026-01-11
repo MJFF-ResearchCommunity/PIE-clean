@@ -293,12 +293,18 @@ def test_load_metabolomic_lrrk2(caplog, tmp_path):
 
 def test_load_project_9000(caplog, tmp_path):
     # Normal loading
-    df = load_project_9000(f"{DATA_DIR}/{SUB_DIR}")
+    key = 'project_9000'
+    data_dict = load_biospecimen_data(DATA_DIR,
+                                      exclude=[d for d in ALL_DATA if d != key])
     # Logging shows that the files were found correctly
-    assert "Successfully processed Project 9000" in caplog.records[-1].message
+    expected = "Successfully processed project_9000"
+    msg = [r for r in caplog.records if expected in r.message]
+    assert len(msg) == 1
     # Logging shows the data was pivoted into wide format
-    assert "4 rows, 8 columns" in caplog.records[-1].message
-    assert df.shape[0] == 4 # ...and the output matches the logging
+    assert "4 rows, 8 columns" in msg[0].message
+    # Unwrap df
+    df = data_dict[key]
+    assert df.shape[0] == 4 # Confirm the output matches the logging
     # PATNOs from each file have been merged together (strings here)
     assert "9999" in df["PATNO"].tolist()
     assert "9998" in df["PATNO"].tolist()
@@ -314,10 +320,14 @@ def test_load_project_9000(caplog, tmp_path):
     assert not df.isnull().any().any()
 
     # Test when the directory is empty
-    df = load_project_9000(tmp_path)
-    assert caplog.records[-1].levelname == "WARNING"
-    assert "No PPMI_Project_9000 files" in caplog.records[-1].message
-    assert df.empty
+    os.makedirs(tmp_path / SUB_DIR)
+    data_dict = load_biospecimen_data(tmp_path,
+                                      exclude=[d for d in ALL_DATA if d != key])
+    expected = f"No {key} files found"
+    msg = [r for r in caplog.records if expected in r.message]
+    assert len(msg) == 1
+    assert msg[0].levelname == "WARNING"
+    assert data_dict == {}
 
     # Test when required column is missing: set up missing PATNO files
     testfile = "PPMI_Project_9000"
@@ -328,25 +338,28 @@ def test_load_project_9000(caplog, tmp_path):
         tmp = tmp.drop(columns="PATNO")
         tmp.to_csv(file, index=False)
 
-    df = load_project_9000(tmp_path)
-    # Not the last records, but repeated for each failure to find a PATNO
-    assert caplog.records[-3].levelname == "ERROR"
-    assert "Required columns ['PATNO'] not found" in caplog.records[-3].message
-    assert caplog.records[-5].levelname == "ERROR"
-    assert "Required columns ['PATNO'] not found" in caplog.records[-5].message
-    # And the last record should note that no PATNOs were found at all
-    assert caplog.records[-1].levelname == "ERROR"
-    assert "Required column PATNO not found" in caplog.records[-1].message
-    assert df.empty
+    data_dict = load_biospecimen_data(tmp_path,
+                                      exclude=[d for d in ALL_DATA if d != key])
+    expected = f"Required columns ['PATNO'] not found"
+    msg = [r for r in caplog.records if expected in r.message]
+    assert len(msg) == 2 # 2 files
+    assert msg[0].levelname == "ERROR"
+    assert data_dict == {}
 
 def test_load_project_222(caplog, tmp_path):
     # Normal loading
-    df = load_project_222(f"{DATA_DIR}/{SUB_DIR}")
+    key = 'project_222'
+    data_dict = load_biospecimen_data(DATA_DIR,
+                                      exclude=[d for d in ALL_DATA if d != key])
     # Logging shows that the files were found correctly
-    assert "Successfully processed Project 222" in caplog.records[-1].message
+    expected = "Successfully processed project_222"
+    msg = [r for r in caplog.records if expected in r.message]
+    assert len(msg) == 1
     # Logging shows the data was pivoted into wide format
-    assert "4 rows, 14 columns" in caplog.records[-1].message
-    assert df.shape[0] == 4 # ...and the output matches the logging
+    assert "4 rows, 14 columns" in msg[0].message
+    # Unwrap df
+    df = data_dict[key]
+    assert df.shape[0] == 4 # Confirm the output matches the logging
     # PATNOs from each file have been merged together (strings here)
     assert "9999" in df["PATNO"].tolist()
     assert "9998" in df["PATNO"].tolist()
@@ -362,10 +375,14 @@ def test_load_project_222(caplog, tmp_path):
     assert not df.isnull().any().any()
 
     # Test when the directory is empty
-    df = load_project_222(tmp_path)
-    assert caplog.records[-1].levelname == "WARNING"
-    assert "No PPMI_Project_222 files" in caplog.records[-1].message
-    assert df.empty
+    os.makedirs(tmp_path / SUB_DIR)
+    data_dict = load_biospecimen_data(tmp_path,
+                                      exclude=[d for d in ALL_DATA if d != key])
+    expected = f"No {key} files found"
+    msg = [r for r in caplog.records if expected in r.message]
+    assert len(msg) == 1
+    assert msg[0].levelname == "WARNING"
+    assert data_dict == {}
 
     # Test when required column is missing: set up missing PATNO files
     testfile = "PPMI_Project_222"
@@ -376,16 +393,13 @@ def test_load_project_222(caplog, tmp_path):
         tmp = tmp.drop(columns="PATNO")
         tmp.to_csv(file, index=False)
 
-    df = load_project_222(tmp_path)
-    # Not the last records, but repeated for each failure to find a PATNO
-    assert caplog.records[-3].levelname == "ERROR"
-    assert "Required columns ['PATNO'] not found" in caplog.records[-3].message
-    assert caplog.records[-5].levelname == "ERROR"
-    assert "Required columns ['PATNO'] not found" in caplog.records[-5].message
-    # And the last record should note that no PATNOs were found at all
-    assert caplog.records[-1].levelname == "ERROR"
-    assert "Required column PATNO not found" in caplog.records[-1].message
-    assert df.empty
+    data_dict = load_biospecimen_data(tmp_path,
+                                      exclude=[d for d in ALL_DATA if d != key])
+    expected = f"Required columns ['PATNO'] not found"
+    msg = [r for r in caplog.records if expected in r.message]
+    assert len(msg) == 2 # 2 files
+    assert msg[0].levelname == "ERROR"
+    assert data_dict == {}
 
 def test_load_project_196(caplog, tmp_path):
     # Normal loading
