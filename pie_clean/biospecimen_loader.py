@@ -94,8 +94,8 @@ logger = logging.getLogger(f"PIE.{__name__}")
 
 def _process_test_file(matching_files, project_name, col_prefix):
     # Load and combine all matching files
-    dfs = [load_single_file(BIOSPECIMEN, f)[1] for f in matching_files]
-    dfs = [df for df in dfs if isinstance(df, pd.DataFrame)] # Filter out Nones
+    dfs = [load_single_file(BIOSPECIMEN, f) for f in matching_files]
+    dfs = [df for df in dfs if not df.empty]
 
     if not dfs:
         logger.error("No files were successfully loaded")

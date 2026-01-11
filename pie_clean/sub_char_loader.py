@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 
-from pie_clean.utils import load_all_files
+from pie_clean.utils import load_all_files, merge_data_dict
 from pie_clean.constants import *
 
 logger = logging.getLogger(f"PIE.{__name__}")
@@ -30,7 +30,8 @@ def load_ppmi_subject_characteristics(folder_path: str) -> pd.DataFrame:
         logger.warning(f"Directory not found: {folder_path}")
         return pd.DataFrame()
 
-    df_merged = load_all_files(folder_path, FILE_PREFIXES, SUBJECT_CHARACTERISTICS, merge=True)
+    df_dict = load_all_files(folder_path, FILE_PREFIXES, SUBJECT_CHARACTERISTICS)
+    df_merged = merge_data_dict(SUBJECT_CHARACTERISTICS, df_dict)
 
     return df_merged
 

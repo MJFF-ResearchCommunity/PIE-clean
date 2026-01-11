@@ -58,7 +58,9 @@ def load_ppmi_medical_history(folder_path: str) -> dict:
         logger.warning(f"Directory not found: {folder_path}")
         return {}
 
-    df_dict = load_all_files(folder_path, MEDICAL_HISTORY_PREFIXES, MEDICAL_HISTORY, merge=False)
+    df_dict = load_all_files(folder_path, MEDICAL_HISTORY_PREFIXES, MEDICAL_HISTORY)
+    # No merge on med_hist, because some datasets such as meds are date-based
+    # instead of event-based.
 
     return df_dict
 

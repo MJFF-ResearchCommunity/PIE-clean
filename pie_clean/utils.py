@@ -193,26 +193,6 @@ def sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
         df.rename(columns=rename_map, inplace=True)
 
 
-def load_single_file(modality: str, full_file_path: str):
-    logger.debug(f"Loading {modality} file: {full_file_path}")
-    try:
-        df = pd.read_csv(full_file_path, low_memory=False)
-    except Exception as e:
-        logger.error(f"{modality}: Could not read file '{full_file_path}': {e}")
-        return None, None
-
-    if "PATNO" not in df.columns:
-        logger.warning(f"{modality} file {full_file_path} is missing PATNO column, skipping.")
-        return None, None
-
-    df['PATNO'] = df['PATNO'].astype(str) # Standardize PATNO immediately
-    if "CLINICAL_EVENT" in df.columns:
-        df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-    sanitize_suffixes_in_df(df) # Rename columns ending _x or _y
-    filename = os.path.basename(full_file_path) # Create a good key for storage
-    filename = "_".join(filename.split("_")[:-1]) # Take off "[date].csv"
-    return filename, df
-
 def find_all_files(modality: str, folder_path: str, file_prefixes: List[str]):
     all_csv_files = list(glob.iglob(os.path.join(folder_path, "**/*.csv"), recursive=True))
 
@@ -225,8 +205,56 @@ def find_all_files(modality: str, folder_path: str, file_prefixes: List[str]):
         all_files.extend(matching_files)
     return all_files
 
+def load_single_file(modality: str, full_file_path: str):
+    logger.debug(f"Loading {modality} file: {full_file_path}")
+    try:
+        df = pd.read_csv(full_file_path, low_memory=False)
+    except Exception as e:
+        logger.error(f"{modality}: Could not read file '{full_file_path}': {e}")
+        return pd.DataFrame()
+
+    if "PATNO" not in df.columns:
+        logger.warning(f"{modality} file {full_file_path} is missing PATNO column, skipping.")
+        return pd.DataFrame()
+
+    df['PATNO'] = df['PATNO'].astype(str) # Standardize PATNO immediately
+    if "CLINICAL_EVENT" in df.columns:
+        df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
+    sanitize_suffixes_in_df(df) # Rename columns ending _x or _y
+    return df
+
+def load_all_files(
+    folder_path: str,
+    file_prefixes: List[str],
+    modality: str,
+    merge: bool = False
+):
+    data_dict = {}
+
+    matching_files = find_all_files(modality, folder_path, file_prefixes)
+
+    for csv_file_path in sorted(matching_files):
+        df_temp = load_single_file(modality, csv_file_path)
+        if df_temp.empty:
+            continue # Error was described in the function
+
+        # Create a good key for storage: filename minus "[date].csv"
+        filename = os.path.basename(csv_file_path)
+        filename = "_".join(filename.split("_")[:-1])
+        if filename in data_dict:
+            logger.warning(f"{modality}: unexpected duplicate filename {filename} found: dropping one")
+        data_dict[filename] = df_temp
+
+    if len(data_dict) == 0:
+        logger.warning(f"No matching {modality} CSV files were successfully loaded.")
+    else:
+        logger.info(f"{modality}: Returning dict of {len(data_dict)} files")
+    return data_dict
 
 def merge_data_dict(modality: str, data_dict: Dict[str, pd.DataFrame]):
+    if len(data_dict) == 0:
+        return pd.DataFrame() # Nothing to merge
+
     df_merged = None
     for i, key in enumerate(data_dict):
         if i == 0:
@@ -297,34 +325,3 @@ def merge_data_dict(modality: str, data_dict: Dict[str, pd.DataFrame]):
 
     logger.info(f"Final loaded {modality} shape: {df_merged.shape}")
     return df_merged
-
-def load_all_files(
-    folder_path: str,
-    file_prefixes: List[str],
-    modality: str,
-    merge: bool = False
-):
-    data_dict = {}
-
-    matching_files = find_all_files(modality, folder_path, file_prefixes)
-
-    for csv_file_path in sorted(matching_files):
-        filename, df_temp = load_single_file(modality, csv_file_path)
-        if not filename:
-            continue # Error was described in the function
-
-        if filename in data_dict:
-            logger.warning(f"{modality}: unexpected duplicate filename {filename} found: dropping one")
-        data_dict[filename] = df_temp
-
-    if len(data_dict) == 0:
-        logger.warning(f"No matching {modality} CSV files were successfully loaded. Returning empty DataFrame.")
-        return pd.DataFrame()
-
-    # Now we have all the data loaded
-    if not merge:
-        logger.info(f"{modality}: Returning dict of {len(data_dict)} files")
-        return data_dict
-
-    # Any errors are handled and logged in the function
-    return merge_data_dict(modality, data_dict)
