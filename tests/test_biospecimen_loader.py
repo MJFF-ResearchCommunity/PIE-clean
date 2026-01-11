@@ -139,8 +139,8 @@ def test_load_project_151(caplog, tmp_path):
     assert "2 rows, 8 columns" in caplog.records[-1].message
     assert df.shape[0] == 2 # ...and the output matches the logging
     # PATNOs from each file have been merged together (ints here)
-    assert 9999 in df["PATNO"].tolist()
-    assert 9998 in df["PATNO"].tolist()
+    assert "9999" in df["PATNO"].tolist()
+    assert "9998" in df["PATNO"].tolist()
     # Test IDs have become column names, with "151_" prepended
     assert "151_10001-7_3" in df.columns.tolist()
     # Others have been dropped
@@ -177,7 +177,9 @@ def test_load_project_151(caplog, tmp_path):
 
     df = load_project_151_pQTL_CSF(tmp_path)
     assert caplog.records[-1].levelname == "ERROR"
-    assert "Required column PATNO not found" in caplog.records[-1].message
+    assert caplog.records[-2].levelname == "WARNING"
+    assert "No files were successfully loaded" in caplog.records[-1].message
+    assert "missing PATNO column" in caplog.records[-2].message
     assert df.empty
 
 def test_load_metabolomic_lrrk2(caplog, tmp_path):
@@ -189,8 +191,8 @@ def test_load_metabolomic_lrrk2(caplog, tmp_path):
     assert "2 rows, 8 columns" in caplog.records[-1].message
     assert df.shape[0] == 2 # ...and the output matches the logging
     # PATNOs from each file have been merged together (ints here)
-    assert 9999 in df["PATNO"].tolist()
-    assert 9998 in df["PATNO"].tolist()
+    assert "9999" in df["PATNO"].tolist()
+    assert "9998" in df["PATNO"].tolist()
     # Test IDs have become column names, with "LRRK2_" prepended
     assert "LRRK2_MZ100.08_RT586.24_pos" in df.columns.tolist()
     # But the CSF tests are not included
@@ -240,7 +242,9 @@ def test_load_metabolomic_lrrk2(caplog, tmp_path):
 
     df = load_metabolomic_lrrk2(tmp_path, include_csf=False)
     assert caplog.records[-1].levelname == "ERROR"
-    assert "Required column PATNO not found" in caplog.records[-1].message
+    assert caplog.records[-2].levelname == "WARNING"
+    assert "No files were successfully loaded" in caplog.records[-1].message
+    assert "missing PATNO column" in caplog.records[-2].message
     assert df.empty
 
 def test_load_project_9000(caplog, tmp_path):
@@ -404,8 +408,8 @@ def test_load_project_177(caplog, tmp_path):
     assert "2 rows, 8 columns" in caplog.records[-1].message
     assert df.shape[0] == 2 # ...and the output matches the logging
     # PATNOs from each file have been merged together (ints here)
-    assert 9999 in df["PATNO"].tolist()
-    assert 9998 in df["PATNO"].tolist()
+    assert "9999" in df["PATNO"].tolist()
+    assert "9998" in df["PATNO"].tolist()
     # Test IDs have become column names, with "177_" prepended
     assert "177_P55058" in df.columns.tolist()
     # Others have been dropped
@@ -435,7 +439,9 @@ def test_load_project_177(caplog, tmp_path):
 
     df = load_project_177_untargeted_proteomics(tmp_path)
     assert caplog.records[-1].levelname == "ERROR"
-    assert "Required column PATNO not found" in caplog.records[-1].message
+    assert caplog.records[-2].levelname == "WARNING"
+    assert "No files were successfully loaded" in caplog.records[-1].message
+    assert "missing PATNO column" in caplog.records[-2].message
     assert df.empty
 
 def test_load_current_biospec(caplog, tmp_path):
@@ -447,8 +453,8 @@ def test_load_current_biospec(caplog, tmp_path):
     assert "2 rows, 8 columns" in caplog.records[-1].message
     assert df.shape[0] == 2 # ...and the output matches the logging
     # PATNOs from each file have been merged together (ints here)
-    assert 9999 in df["PATNO"].tolist()
-    assert 9998 in df["PATNO"].tolist()
+    assert "9999" in df["PATNO"].tolist()
+    assert "9998" in df["PATNO"].tolist()
     # Test IDs have become column names, with "BIO_" prepended
     assert "BIO_SNCA_multiplication" in df.columns.tolist()
     # Different capitalizations of Genotype have been harmonized
@@ -485,7 +491,9 @@ def test_load_current_biospec(caplog, tmp_path):
 
     df = load_current_biospecimen_analysis(tmp_path)
     assert caplog.records[-1].levelname == "ERROR"
-    assert "Required column PATNO not found" in caplog.records[-1].message
+    assert caplog.records[-2].levelname == "WARNING"
+    assert "No files were successfully loaded" in caplog.records[-1].message
+    assert "missing PATNO column" in caplog.records[-2].message
     assert df.empty
 
 def test_load_blood_chem(caplog, tmp_path):
@@ -497,8 +505,8 @@ def test_load_blood_chem(caplog, tmp_path):
     assert "2 rows, 11 columns" in caplog.records[-1].message
     assert df.shape[0] == 2 # ...and the output matches the logging
     # PATNOs from each file have been merged together (ints here)
-    assert 9999 in df["PATNO"].tolist()
-    assert 9998 in df["PATNO"].tolist()
+    assert "9999" in df["PATNO"].tolist()
+    assert "9998" in df["PATNO"].tolist()
     # Test IDs have become column names, with "BCH_" prepended,
     # and the SI result, high, and low values
     assert "BCH_RCT4_ALT_(SGPT)_LSIRES" in df.columns.tolist()

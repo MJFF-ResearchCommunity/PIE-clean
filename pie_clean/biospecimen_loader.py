@@ -86,29 +86,19 @@ from typing import Union
 import gc # <--- IMPORT GARBAGE COLLECTOR
 import psutil # Keep existing import
 
-from pie_clean.utils import aggregate_by_patno_eventid
+from pie_clean.utils import *
+from pie_clean.constants import *
 
 logger = logging.getLogger(f"PIE.{__name__}")
 
 
 def _process_test_file(matching_files, project_name, col_prefix):
     # Load and combine all matching files
-    dfs = []
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-
-            dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
+    dfs = [load_single_file(BIOSPECIMEN, f)[1] for f in matching_files]
+    dfs = [df for df in dfs if isinstance(df, pd.DataFrame)] # Filter out Nones
 
     if not dfs:
-        logger.warning("No files were successfully loaded")
+        logger.error("No files were successfully loaded")
         return pd.DataFrame()
 
     # Combine all dataframes
@@ -281,6 +271,7 @@ def _process_npx_files(matching_files, project_num):
     del data_dict # Delete the large intermediate dict
     gc.collect()
 
+    result_df["PATNO"] = result_df["PATNO"].astype(str) # Ensure PATNO is a string
     return result_df
 
 
@@ -304,22 +295,12 @@ def load_project_151_pQTL_CSF(folder_path: str, batch_corrected: bool = False) -
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
 
-    # Filter files based on prefix and batch_corrected parameter
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        is_project_151 = filename.startswith("Project_151_pQTL_in_CSF")
-        is_batch_corrected = "Batch_Corrected" in filename
-
-        if is_project_151 and is_batch_corrected == batch_corrected:
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["Project_151_pQTL_in_CSF"])
+    if batch_corrected: # Either or
+        matching_files = [f for f in matching_files if "Batch_Corrected" in f]
+    else:
+        matching_files = [f for f in matching_files if "Batch_Corrected" not in f]
 
     if not matching_files:
         batch_type = "batch-corrected" if batch_corrected else "non-batch-corrected"
@@ -351,25 +332,9 @@ def load_metabolomic_lrrk2(folder_path: str, include_csf: bool = True) -> pd.Dat
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        is_metabolomic_lrrk2 = filename.startswith("Metabolomic_Analysis_of_LRRK2")
-        is_csf = "_CSF" in filename
-
-        # Include the file if:
-        # 1. It's a regular LRRK2 file (not CSF) OR
-        # 2. It's a CSF file and include_csf is True
-        if is_metabolomic_lrrk2 and (not is_csf or include_csf):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["Metabolomic_Analysis_of_LRRK2"])
+    if not include_csf: # Include both, unless we say no CSF
+        matching_files = [f for f in matching_files if "_CSF" not in f]
 
     if not matching_files:
         csf_status = "including CSF files" if include_csf else "excluding CSF files"
@@ -399,19 +364,7 @@ def load_urine_proteomics(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-    
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("Targeted___untargeted_MS-based_proteomics_of_urine_in_PD"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["Targeted___untargeted_MS-based_proteomics_of_urine_in_PD"])
     
     if not matching_files:
         logger.warning(f"No Targeted___untargeted_MS-based_proteomics_of_urine_in_PD files found in {folder_path}")
@@ -474,12 +427,11 @@ def load_urine_proteomics(folder_path: str) -> pd.DataFrame:
         # Rename columns to add "URINE_" prefix to TESTNAME columns
         # First, get the names of columns that were created from TESTNAME
         testname_columns = [col for col in pivoted_df.columns if col not in pivot_columns]
-        
         # Create a dictionary for renaming
         rename_dict = {col: f"URINE_{col}" for col in testname_columns}
-        
-        # Rename the columns
         pivoted_df = pivoted_df.rename(columns=rename_dict)
+
+        pivoted_df["PATNO"] = pivoted_df["PATNO"].astype(str) # Ensure PATNO is string
         
         logger.info(f"Successfully processed urine proteomics data: {len(pivoted_df)} rows, {len(pivoted_df.columns)} columns")
         return pivoted_df
@@ -508,19 +460,7 @@ def load_project_9000(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("PPMI_Project_9000"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["PPMI_Project_9000"])
 
     if not matching_files:
         logger.warning(f"No PPMI_Project_9000 files found in {folder_path}")
@@ -552,19 +492,7 @@ def load_project_222(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("PPMI_Project_222"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["PPMI_Project_222"])
 
     if not matching_files:
         logger.warning(f"No PPMI_Project_222 files found in {folder_path}")
@@ -596,19 +524,7 @@ def load_project_196(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("PPMI_Project_196"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["PPMI_Project_196"])
 
     if not matching_files:
         logger.warning(f"No PPMI_Project_196 files found in {folder_path}")
@@ -727,6 +643,8 @@ def load_project_196(folder_path: str) -> pd.DataFrame:
 
     # Create DataFrame from the list of dictionaries
     result_df = pd.DataFrame(rows)
+    if "PATNO" in result_df.columns:
+        result_df["PATNO"] = result_df["PATNO"].astype(str)
 
     # Explicit garbage collection before returning
     del data_dict # Delete the large intermediate dict
@@ -760,19 +678,8 @@ def load_project_177_untargeted_proteomics(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
 
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("PPMI_Project_177"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["PPMI_Project_177"])
 
     if not matching_files:
         logger.warning(f"No PPMI_Project_177 files found in {folder_path}")
@@ -806,19 +713,7 @@ def load_project_214_olink(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each UNIPROT-ASSAY metric
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-    
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("Project_214_Olink"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["Project_214_Olink"])
     
     if not matching_files:
         logger.warning(f"No Project_214_Olink files found in {folder_path}")
@@ -932,6 +827,7 @@ def load_project_214_olink(folder_path: str) -> pd.DataFrame:
     
     # Create DataFrame from the list of dictionaries
     result_df = pd.DataFrame(rows)
+    result_df["PATNO"] = result_df["PATNO"].astype(str)
     
     # Explicit garbage collection before returning
     del data_dict # Delete the large intermediate dict
@@ -958,19 +854,7 @@ def load_current_biospecimen_analysis(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("Current_Biospecimen_Analysis_Results"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["Current_Biospecimen_Analysis_Results"])
 
     if not matching_files:
         logger.warning(f"No Current_Biospecimen_Analysis_Results files found in {folder_path}")
@@ -1002,19 +886,7 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns for each test metric
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-
-    # Filter files based on prefix
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        if filename.startswith("Blood_Chemistry___Hematology"):
-            matching_files.append(file_path)
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, ["Blood_Chemistry___Hematology"])
 
     if not matching_files:
         logger.warning(f"No Blood_Chemistry___Hematology files found in {folder_path}")
@@ -1121,6 +993,7 @@ def load_blood_chemistry_hematology(folder_path: str) -> pd.DataFrame:
 
     if not result_df.empty:
         logger.info(f"Successfully processed Blood Chemistry & Hematology data: {len(result_df)} rows, {len(result_df.columns)} columns")
+        result_df["PATNO"] = result_df["PATNO"].astype(str)
     return result_df
 
 
@@ -1146,29 +1019,17 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
     Returns:
         A DataFrame with one row per PATNO/EVENT_ID and columns from all matching files
     """
-    # Find all CSV files in the folder and its subdirectories
-    all_csv_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith('.csv'):
-                all_csv_files.append(os.path.join(root, file))
-    
-    # Filter files based on prefixes
-    matching_files = []
-    for file_path in all_csv_files:
-        filename = os.path.basename(file_path)
-        for prefix in file_prefixes:
-            if filename.startswith(prefix):
-                matching_files.append((prefix, file_path))
-                break
-    
+    matching_files = find_all_files(BIOSPECIMEN, folder_path, file_prefixes)
     if not matching_files:
         logger.warning(f"No files matching the provided prefixes found in {folder_path}")
         return pd.DataFrame()
-    
+
+    get_prefix = lambda filename: [p for p in file_prefixes \
+            if os.file.basename(filename).startswith(p)][0]
     # Group files by prefix for logging purposes
     files_by_prefix = {}
-    for prefix, file_path in matching_files:
+    for file_path in matching_files:
+        prefix = get_prefix(filepath)
         if prefix not in files_by_prefix:
             files_by_prefix[prefix] = []
         files_by_prefix[prefix].append(file_path)
@@ -1181,7 +1042,7 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
     dataframes = []
     column_sources = {}  # Track which file each column came from
     
-    for prefix, file_path in matching_files:
+    for file_path in matching_files:
         try:
             logger.info(f"Loading file: {file_path}")
             df = pd.read_csv(file_path)
