@@ -110,15 +110,7 @@ class DataLoader:
         for modality in valid_modalities:
             logger.info(f"Loading {modality} data...")
             folder_path = os.path.join(data_path, FOLDER_PATHS[modality])
-            
-            if not os.path.exists(folder_path):
-                logger.warning(f"Directory not found: {folder_path}")
-                if modality == MEDICAL_HISTORY:
-                    data_dict[modality] = {}
-                else:
-                    data_dict[modality] = pd.DataFrame()
-                continue
-            
+
             if modality == SUBJECT_CHARACTERISTICS:
                 data_dict[modality] = load_ppmi_subject_characteristics(folder_path)
                 logger.info(f"Loaded {modality} with {len(data_dict[modality])} rows")
