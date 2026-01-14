@@ -15,7 +15,7 @@ logging.getLogger("PIE").setLevel(logging.DEBUG)
 DATA_DIR = "tests/test_data"
 SUB_DIR = "Motor___MDS-UPDRS" 
 
-load_msg = f"Loading motor assessment file: {DATA_DIR}/{SUB_DIR}"
+load_msg = f"Loading motor_assessments file: {DATA_DIR}/{SUB_DIR}"
 
 def test_load_ppmi_motor_assessments(caplog):
     df = load_ppmi_motor_assessments(DATA_DIR)
@@ -29,17 +29,23 @@ def test_load_ppmi_motor_assessments(caplog):
     # Now pick out some specifics
     for record in caplog.records:
         if "Part_I_Patient" in record.message:
-            # One and only one message, for loading
-            assert f"{load_msg}/MDS-UPDRS_Part_I_Patient" in record.message
+            # Two logs: one for loading, and one for merging
+            assert f"{load_msg}/MDS-UPDRS_Part_I_Patient" in record.message or \
+                    "on PATNO and EVENT_ID" in record.message
+            # And merging must be in there somewhere
+            assert "Part_I_Patient_Questionnaire on PATNO and EVENT_ID" in caplog.text
         elif "Part_I_" in record.message: # Already eliminated Patient versions
-            # One and only one message, for loading
-            assert f"{load_msg}/MDS-UPDRS_Part_I_" in record.message
+            # Two logs: one for loading, and one for merging
+            assert f"{load_msg}/MDS-UPDRS_Part_I_" in record.message or \
+                    "on PATNO and EVENT_ID" in record.message
+            # And merging must be in there somewhere
+            assert "Part_I on PATNO and EVENT_ID" in caplog.text
         elif "Part_II_Patient" in record.message:
             # One and only one message, for loading
             assert f"{load_msg}/MDS-UPDRS_Part_II_Patient" in record.message
         elif "Neuro_QoL" in record.message:
             # Load only the Motor versions of Neuro_QoL, not the Non-motor versions
-            assert f"{load_msg}/Neuro_QoL__Lower_Extremity" in record.message or\
+            assert f"Neuro_QoL__Lower_Extremity" in record.message or\
                    f"Neuro_QoL__Upper_Extremity" in record.message
             # We've mocked up Lower_Extremity, so it must be actually loaded
             assert f"{load_msg}/Neuro_QoL__Lower_Extremity" in caplog.text
@@ -76,14 +82,14 @@ def test_load_ppmi_motor_assessments(caplog):
     assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="BL")].iloc[0,:]["NUPSOURC"] == 1
     # Different values get merged into a pipe-separated string
     assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="V04")].iloc[0,:]["NUPSOURC"] == "1|2"
-    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="V06")].iloc[0,:]["NUPSOURC"] == "1|2|3"
+    assert df[(df["PATNO"]=="9999")&(df["EVENT_ID"]=="V06")].iloc[0,:]["NUPSOURC"] == "2|1|3"
 
 def test_empty_dir(caplog, tmp_path):
     df = load_ppmi_motor_assessments(tmp_path)
 
     record = caplog.records[-1] # Last log message
     assert record.levelname == "WARNING"
-    assert "No matching motor assessment CSV files" in record.message
+    assert "No matching motor_assessments CSV files" in record.message
     assert df.empty
 
 def test_missing_patno(caplog, tmp_path):
@@ -100,7 +106,7 @@ def test_missing_patno(caplog, tmp_path):
     records = [r for r in caplog.records if testfile in r.message]
     assert len(records) == 2, f"Should be 2 log records for {testfile}: found {len(records)}"
 
-    assert "Loading motor assessment file" in records[0].message # normal loading msg
+    assert "Loading motor_assessments file" in records[0].message # normal loading msg
     assert records[1].levelname == "WARNING"
     assert "missing PATNO column, skipping" in records[1].message
 

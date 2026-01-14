@@ -15,7 +15,7 @@ logging.getLogger("PIE").setLevel(logging.DEBUG)
 DATA_DIR = "tests/test_data"
 SUB_DIR = "_Subject_Characteristics"
 
-load_msg = f"Loading subject characteristics file: {DATA_DIR}/{SUB_DIR}"
+load_msg = f"Loading subject_characteristics file: {DATA_DIR}/{SUB_DIR}"
 
 def test_load_ppmi_subject_characteristics(caplog):
     df = load_ppmi_subject_characteristics(DATA_DIR)
@@ -32,8 +32,11 @@ def test_load_ppmi_subject_characteristics(caplog):
             # One and only one message, for loading
             assert f"{load_msg}/Age_at_visit" in record.message
         elif "Family_History" in record.message:
-            # One and only one message, for loading
-            assert f"{load_msg}/Family_History" in record.message
+            # Two logs: one for loading, and one for merging
+            assert f"{load_msg}/Family_History" in record.message or \
+                    "on PATNO and EVENT_ID" in record.message
+            # And merging must be in there somewhere
+            assert "on PATNO and EVENT_ID" in caplog.text
         elif "Participant_Status" in record.message:
             # Two logs: one for loading, and one for merging
             assert f"{load_msg}/Participant_Status" in record.message or \
@@ -82,7 +85,7 @@ def test_empty_dir(caplog, tmp_path):
 
     record = caplog.records[-1] # Last log message
     assert record.levelname == "WARNING"
-    assert "No matching subject characteristics" in record.message
+    assert "No matching subject_characteristics" in record.message
     assert df.empty
 
 def test_missing_patno(caplog, tmp_path):
@@ -98,7 +101,7 @@ def test_missing_patno(caplog, tmp_path):
     records = [r for r in caplog.records if "Age_at_visit" in r.message]
     assert len(records) == 2, f"Should be 2 log records for Age_at_visit: found {len(records)}"
 
-    assert "Loading subject characteristics file" in records[0].message # normal loading msg
+    assert "Loading subject_characteristics file" in records[0].message # normal loading msg
     assert records[1].levelname == "WARNING"
     assert "missing PATNO column, skipping" in records[1].message
 

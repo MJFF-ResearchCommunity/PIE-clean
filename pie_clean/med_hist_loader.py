@@ -4,6 +4,9 @@ import os
 import pandas as pd
 import numpy as np
 
+from pie_clean.utils import load_all_files
+from pie_clean.constants import *
+
 logger = logging.getLogger(f"PIE.{__name__}")
 
 # Many medical history files cannot be merged, because data is recorded multiple times per visit,
@@ -42,35 +45,8 @@ MEDICAL_HISTORY_PREFIXES = [
     "Vital_Signs"
 ]
 
-def sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
-    """
-    Rename columns in df if they already end with '_x' or '_y'.
-    For example:
-      'SUB_EVENT_ID_x' -> 'SUB_EVENT_ID_x_col'
-      'SUB_EVENT_ID_y' -> 'SUB_EVENT_ID_y_col'
-    If 'SUB_EVENT_ID_x_col' also exists, keep incrementing => 'SUB_EVENT_ID_x_col1', etc.
-    """
-    rename_map = {}
-    for col in df.columns:
-        if col.endswith("_x") or col.endswith("_y"):
-            base = col  # e.g. 'SUB_EVENT_ID_x'
-            # Chop off the last two chars ('_x' or '_y') and append '_col'
-            new_base = base[:-2] + "_col"  # e.g. 'SUB_EVENT_ID_col'
-            new_col = new_base
 
-            # If that new_col also exists, keep incrementing
-            count = 1
-            while new_col in df.columns or new_col in rename_map.values():
-                new_col = f"{new_base}{count}"
-                count += 1
-
-            rename_map[col] = new_col
-
-    if rename_map:
-        df.rename(columns=rename_map, inplace=True)
-
-
-def load_ppmi_medical_history(folder_path: str) -> pd.DataFrame:
+def load_ppmi_medical_history(folder_path: str) -> dict:
     """
     1) Lists all CSV files in 'folder_path' that start with any MEDICAL_HISTORY_PREFIX.
     2) For each CSV, read into df_temp.
@@ -78,43 +54,13 @@ def load_ppmi_medical_history(folder_path: str) -> pd.DataFrame:
          - Store in a dict of tables, with the prefix as the key
     3) Return the dict or empty if no files found.
     """
-    df_dict = {}
-    found_any_file = False
+    if not os.path.exists(folder_path):
+        logger.warning(f"Directory not found: {folder_path}")
+        return {}
 
-    # Some columns that might appear in multiple DataFrames
-    columns_to_deduplicate = [
-        "PAG_NAME", "INFODT", "ORIG_ENTRY", "LAST_UPDATE", "COHORT", "REC_ID"
-        # Add additional column names here if needed
-    ]
-
-    # Search all subdirectories too
-    all_csv_files = list(glob.iglob("**/*.csv", root_dir=folder_path, recursive=True))
-
-    for prefix in MEDICAL_HISTORY_PREFIXES:
-        # Strip directory path, and look only at the filename for the prefix
-        matching_files = [f for f in all_csv_files if f.split("/")[-1].startswith(prefix)]
-        if not matching_files:
-            logger.warning(f"No CSV file found for prefix: {prefix}")
-            continue
-
-        for filename in matching_files:
-            csv_file = os.path.join(folder_path, filename)
-            try:
-                logger.debug(f"Loading medical history file: {csv_file}")
-                df_temp = pd.read_csv(csv_file)
-                found_any_file = True
-            except Exception as e:
-                logger.warning(f"Could not read file '{csv_file}': {e}")
-                continue
-
-            # 1) Rename any leftover _x / _y columns in df_temp
-            sanitize_suffixes_in_df(df_temp)
-
-            df_dict[prefix] = df_temp
-
-    # Return empty DataFrame if no data was loaded
-    if not found_any_file:
-        logger.warning("No matching medical history CSV files were loaded - returning empty dict.")
+    df_dict = load_all_files(folder_path, MEDICAL_HISTORY_PREFIXES, MEDICAL_HISTORY)
+    # No merge on med_hist, because some datasets such as meds are date-based
+    # instead of event-based.
 
     return df_dict
 

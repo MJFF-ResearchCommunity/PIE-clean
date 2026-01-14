@@ -82,14 +82,14 @@ def test_clean_vital_signs(data_dict):
     assert "Stnd BP label" in clean_df
 
     # Test specific mappings
-    assert clean_df[(clean_df["PATNO"]==9999)&(clean_df["EVENT_ID"]=="SC")].iloc[0,:]["Sup BP code"] == 0
-    assert clean_df[(clean_df["PATNO"]==9999)&(clean_df["EVENT_ID"]=="BL")].iloc[0,:]["Sup BP code"] == 1
-    assert clean_df[(clean_df["PATNO"]==9999)&(clean_df["EVENT_ID"]=="V01")].iloc[0,:]["Sup BP code"] == 2
-    assert clean_df[(clean_df["PATNO"]==9998)&(clean_df["EVENT_ID"]=="BL")].iloc[0,:]["Stnd BP code"] == 3
-    assert clean_df[(clean_df["PATNO"]==9998)&(clean_df["EVENT_ID"]=="SC")].iloc[0,:]["Sup BP code"] == 4
+    assert clean_df[(clean_df["PATNO"]=="9999")&(clean_df["EVENT_ID"]=="SC")].iloc[0,:]["Sup BP code"] == 0
+    assert clean_df[(clean_df["PATNO"]=="9999")&(clean_df["EVENT_ID"]=="BL")].iloc[0,:]["Sup BP code"] == 1
+    assert clean_df[(clean_df["PATNO"]=="9999")&(clean_df["EVENT_ID"]=="V01")].iloc[0,:]["Sup BP code"] == 2
+    assert clean_df[(clean_df["PATNO"]=="9998")&(clean_df["EVENT_ID"]=="BL")].iloc[0,:]["Stnd BP code"] == 3
+    assert clean_df[(clean_df["PATNO"]=="9998")&(clean_df["EVENT_ID"]=="SC")].iloc[0,:]["Sup BP code"] == 4
 
 def test_clean_concomitant_meds(data_dict):
-    orig_df = data_dict[MEDICAL_HISTORY]["Concomitant_Medication"]
+    orig_df = data_dict[MEDICAL_HISTORY]["Concomitant_Medication_Log"]
     clean_df = DataPreprocessor.clean_concomitant_meds(orig_df)
     assert "CMTRT" in clean_df.columns
 
@@ -122,7 +122,7 @@ def test_clean_concomitant_meds(data_dict):
 
 def test_clean_ledd_meds(data_dict):
     clean_df = DataPreprocessor.clean_ledd_meds(
-            data_dict[MEDICAL_HISTORY]["LEDD_Concomitant_Medication"])
+            data_dict[MEDICAL_HISTORY]["LEDD_Concomitant_Medication_Log"])
     assert "LEDTRT" in clean_df.columns
 
     assert clean_df["LEDTRT"].notnull().all() # All should have names
@@ -131,7 +131,7 @@ def test_clean_ledd_meds(data_dict):
 
     # Cleaning should remove some of the nulls (although unfortunately not all)
     assert clean_df["LEDD"].isnull().sum() < \
-        data_dict[MEDICAL_HISTORY]["LEDD_Concomitant_Medication"]["LEDD"].isnull().sum()
+        data_dict[MEDICAL_HISTORY]["LEDD_Concomitant_Medication_Log"]["LEDD"].isnull().sum()
     # This one can't be converted
     assert pd.isnull(clean_df[clean_df["LEDTRT"]=="LEVODOPA"]["LEDD"].iloc[0])
     # Specific translated values
@@ -158,4 +158,4 @@ def test_clean_ledd_meds(data_dict):
 
 @pytest.mark.skip(reason="Don't recreate every time")
 def test_create_concomitant_meds(data_dict):
-    DataPreprocessor.create_concomitant_meds(data_dict[MEDICAL_HISTORY]["Concomitant_Medication"])
+    DataPreprocessor.create_concomitant_meds(data_dict[MEDICAL_HISTORY]["Concomitant_Medication_Log"])
