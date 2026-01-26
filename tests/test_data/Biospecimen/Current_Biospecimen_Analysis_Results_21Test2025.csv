@@ -7,3 +7,10 @@
 9999,Male,PD,SC,miRNA,APP,2.34,SD,2012-02-01,114,Jane Doe,Company Inc,2025-08-22 16:02
 9998,Female,PD,SC,miRNA,APP,34.56,Avg CT,2012-02-01,114,Jane Doe,Company Inc,2025-08-22 16:02
 9998,Female,PD,SC,miRNA,APP,2.34,SD,2012-02-01,114,Jane Doe,Company Inc,2025-08-22 16:02
+9999,Male,PD,BL,Cerebrospinal Fluid,Seed Amplification Assay,11000,MedianMaxRFU (RFU),2012-02-01,207,Jane Doe,Company Inc,2025-08-22 16:02
+9999,Male,PD,BL,Cerebrospinal Fluid,Seed Amplification Assay,150,MedianTimeToHalfMax (hours),2012-02-01,207,Jane Doe,Company Inc,2025-08-22 16:02
+9999,Male,PD,BL,Cerebrospinal Fluid,"SYNTap-CSF, Qualitative",DETECTED,qualitative,2012-02-01,207,Jane Doe,Company Inc,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,Seed Amplification Assay,11000,MedianMaxRFU (RFU),2012-02-01,114,Jane Doe,Company Inc,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,Seed Amplification Assay,150,MedianTimeToHalfMax (hours),2012-02-01,207,Jane Doe,Company Inc,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,"SYNTap-CSF, Qualitative",DETECTED,qualitative,2012-02-01,207,Jane Doe,Company Inc,2025-08-22 16:02
+9998,Female,PD,BL,Cerebrospinal Fluid,"SYNTap-CSF, Qualitative",NOT DETECTED,qualitative,2012-02-01,207,Jane Doe,Company Inc,2025-08-22 16:02
