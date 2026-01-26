@@ -1,3 +1,4 @@
+from __future__ import annotations
 import glob
 import logging
 import os
@@ -193,7 +194,7 @@ def sanitize_suffixes_in_df(df: pd.DataFrame) -> None:
         df.rename(columns=rename_map, inplace=True)
 
 
-def find_all_files(modality: str, folder_path: str, file_prefixes: List[str]):
+def find_all_files(modality: str, folder_path: str, file_prefixes: list[str]):
     all_csv_files = list(glob.iglob(os.path.join(folder_path, "**/*.csv"), recursive=True))
 
     all_files = []
@@ -225,7 +226,7 @@ def load_single_file(modality: str, full_file_path: str):
 
 def load_all_files(
     folder_path: str,
-    file_prefixes: List[str],
+    file_prefixes: list[str],
     modality: str,
     merge: bool = False
 ):
@@ -251,7 +252,7 @@ def load_all_files(
         logger.info(f"{modality}: Returning dict of {len(data_dict)} files")
     return data_dict
 
-def merge_data_dict(modality: str, data_dict: Dict[str, pd.DataFrame]):
+def merge_data_dict(modality: str, data_dict: dict[str, pd.DataFrame]):
     if len(data_dict) == 0:
         return pd.DataFrame() # Nothing to merge
 
