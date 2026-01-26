@@ -4,12 +4,12 @@ data_loader.py
 High-level data loading interface that provides a unified way to load data
 from different modalities and sources.
 """
-
+from __future__ import annotations
 import logging
 import os
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Union, Optional
+from typing import Any, Union, Optional
 import gc # Make sure gc is imported at the top
 
 try:
@@ -48,13 +48,13 @@ class DataLoader:
     @staticmethod
     def load(
         data_path: str = "./PPMI",
-        modalities: Optional[List[str]] = None,
+        modalities: Optional[list[str]] = None,
         source: str = "PPMI",
         merge_output: bool = False,
         output_file: str = None,
         clean_data: bool = True,
-        biospec_exclude: Optional[List[str]] = None
-    ) -> Union[Dict[str, Any], pd.DataFrame]:
+        biospec_exclude: Optional[list[str]] = None
+    ) -> Union[dict[str, Any], pd.DataFrame]:
         """
         Load data from specified modalities.
         
