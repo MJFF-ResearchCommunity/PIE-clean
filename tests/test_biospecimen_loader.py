@@ -522,16 +522,12 @@ def test_load_current_biospec(caplog, tmp_path):
     key = 'current_biospecimen'
     data_dict = load_biospecimen_data(DATA_DIR,
                                       exclude=[d for d in ALL_DATA if d != key])
-    # TODO: Remove diagnostic prints when bug (below) is resolved
-    print(data_dict["current_biospecimen"])
-    print(data_dict["current_biospecimen"].loc[0,:].transpose())
     # Logging shows that the files were found correctly
     expected = "Successfully processed Current_Biospecimen"
     msg = [r for r in caplog.records if expected in r.message]
     assert len(msg) == 1
     # Logging shows the data was pivoted into wide format
-    # TODO: should be 11 cols when bug is resolved
-    assert "4 rows, 12 columns" in msg[0].message
+    assert "4 rows, 11 columns" in msg[0].message
     # Unwrap df
     df = data_dict[key]
     assert df.shape[0] == 4 # ...and the output matches the logging
@@ -551,9 +547,6 @@ def test_load_current_biospec(caplog, tmp_path):
     assert "BIO_Seed Amplification Assay_MedianMaxRFU (RFU)" in df.columns.tolist()
     assert "BIO_Seed Amplification Assay_MedianTimeToHalfMax (hours)" in df.columns.tolist()
     assert "BIO_SYNTap-CSF, Qualitative" in df.columns.tolist() # ...and not for SYNTap
-    # TODO: Fix this bug where duplicate tests for certain patients result
-    # in an extra column with the units attached. 9998 has two tests at BL.
-    assert "BIO_SYNTap-CSF, Qualitative_qualitative" in df.columns.tolist()
     # Others have been dropped
     assert "PLATEID" not in df.columns.tolist()
     # But SEX was kept
@@ -565,10 +558,12 @@ def test_load_current_biospec(caplog, tmp_path):
     # And data is not complete: SAA is at BL while others are as SC
     saa_cols = ["BIO_Seed Amplification Assay_MedianMaxRFU (RFU)",
                 "BIO_Seed Amplification Assay_MedianTimeToHalfMax (hours)",
-                "BIO_SYNTap-CSF, Qualitative",
-                "BIO_SYNTap-CSF, Qualitative_qualitative"] # TODO: remove when bug is fixed
+                "BIO_SYNTap-CSF, Qualitative"]
     assert not df[df["EVENT_ID"]=="SC"].drop(columns=saa_cols).isnull().any().any()
     assert df[df["EVENT_ID"]=="SC"][saa_cols].isnull().all().all()
+    # Test duplicate entries for SAA get merged correctly (numeric and string)
+    assert df[(df["PATNO"]=="9998")&(df["EVENT_ID"]=="BL")][saa_cols[0]].iloc[0] == "11000|12000"
+    assert df[(df["PATNO"]=="9998")&(df["EVENT_ID"]=="BL")][saa_cols[2]].iloc[0] == "DETECTED|NOT DETECTED"
 
     # Test when the directory is empty
     os.makedirs(tmp_path / SUB_DIR)

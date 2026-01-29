@@ -119,24 +119,65 @@ def _process_test_file(matching_files, project_name, col_prefix):
     # Pivot the data to create columns for each TESTNAME
     try:
         # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME.
-        # Occasionally, the same test will be inconsistently capitalized
+        ## Occasionally, the same test will be inconsistently capitalized
         uppers = [test.upper() for test in combined_df["TESTNAME"].unique()]
         case_dups = set([test for test in uppers if uppers.count(test) > 1])
         if len(case_dups) > 0:
             logger.info(f"Found inconsistent capitalization for columns {list(case_dups)}")
             combined_df["TESTNAME"] = combined_df["TESTNAME"].apply(
                     lambda tn: tn.upper() if tn.upper() in case_dups else tn)
-        # If there are still duplicates, append the units
+        ## If there are still duplicates, try to append the units
         dup_rows = combined_df.duplicated(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep=False)
+        # Create a mapping of {TESTNAME: TESTNAME_UNITS} if duplicated
+        test_map = {}
+        for i, row in combined_df.iterrows():
+            alt = f"{row['TESTNAME']}_{row['UNITS']}" if dup_rows[i] \
+                                                      else row["TESTNAME"]
+            try:
+                test_map[row["TESTNAME"]].add(alt)
+            except KeyError:
+                test_map[row["TESTNAME"]] = {alt}
+        # Does appending the units actually help?
+        append_units = []
+        for k, v in test_map.items():
+            if len(v) == 1: # Simple case, no duplicates
+                continue
+            logger.debug(f"Found multiple mappings for {k}: {v}")
+            if k in v and len(v) > 2:
+                # TESTNAME exists as well as TESTNAME_UNITs, so only some patients
+                # have dups. There are 2 or more UNITs, so these should all get units.
+                append_units.append(k)
+            elif k not in v:
+                # We have 2 or more UNITS, and not the original TESTNAME,
+                # so these should all get units.
+                append_units.append(k)
+            # else, multiple mappings come from a subset of patients having dups,
+            # so the map is {k: {k, k_UNITS}}. No need to append units to these.
+
+        # Now we can rewrite the TESTNAMEs based on columns in append_units
         combined_df["TESTNAME"] = combined_df.apply(lambda row:
-                f"{row['TESTNAME']}_{row['UNITS']}" if dup_rows[row.name] \
+                f"{row['TESTNAME']}_{row['UNITS']}" if row["TESTNAME"] in append_units \
                                                     else row["TESTNAME"], axis=1)
-        # If there are STILL duplicates, keep the first occurrence
+        ## If there are STILL duplicates, combine values with a pipe (|)
+        def pipe_sep(ser):
+            if ser.nunique() == 1:
+                return ser.iloc[0]
+            if pd.api.types.is_object_dtype(ser) and \
+                    len(set(ser)) != len(set(ser.str.upper())):
+                # We've got strings with inconsistent capitalization
+                return "|".join(sorted(list(set(ser.str.upper()))))
+            # Either not strings, or no inconsistent caps, so preserve format
+            return "|".join(sorted(list(set(ser))))
+
+        vals = combined_df.groupby(["PATNO", "EVENT_ID", "TESTNAME"]
+                                   ).TESTVALUE.apply(pipe_sep)
+        combined_df["TESTVALUE"] = combined_df.apply(
+                lambda row: vals[(row["PATNO"], row["EVENT_ID"], row["TESTNAME"])], axis=1)
         combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
-        # Now drop the UNITS column
+        ## Now drop the UNITS column
         combined_df = combined_df.drop(columns="UNITS")
 
-        # Pivot the data
+        ## Pivot the data
         pivot_columns = ["PATNO", "EVENT_ID"]
         if "SEX" in combined_df.columns:
             pivot_columns.append("SEX")
@@ -147,7 +188,7 @@ def _process_test_file(matching_files, project_name, col_prefix):
             index=pivot_columns,
             columns="TESTNAME",
             values="TESTVALUE",
-            aggfunc="first"  # In case there are still duplicates
+            aggfunc="first" # Need a placeholder that works for numeric and object
         ).reset_index()
 
         # Rename columns to add project-specific prefix to TESTNAME columns
@@ -1022,7 +1063,7 @@ def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = 
         logger.warning(f"Biospecimen directory not found: {biospecimen_path}")
         return biospecimen_data
 
-    # Some files follow a regular format of TEST_NAME, TEST_VALUE. These can
+    # Some files follow a regular format of TESTNAME, TESTVALUE. These can
     # all be processed in the same way.
     for key in TEST_FILES:
         if key in exclude:
