@@ -638,3 +638,40 @@ def test_load_blood_chem(caplog, tmp_path):
     assert caplog.records[-2].levelname == "ERROR"
     assert "Required columns ['PATNO'] not found" in caplog.records[-2].message
     assert df.empty
+
+def test_load_and_join_biospec_files(caplog, tmp_path):
+    prefixes = [
+                "Clinical_Labs", # Just a record of when labs were taken: no data
+                "Genetic_Testing_Results",
+                "Skin_Biopsy",
+                "Research_Biospecimens",
+                "Lumbar_Puncture",
+                "Laboratory_Procedures_with_Elapsed_Times"
+               ]
+    # Normal loading and join
+    df = load_and_join_biospecimen_files(f"{DATA_DIR}/{SUB_DIR}", prefixes, True)
+    print(df)
+    print(df.head(1).transpose())
+    print(df.columns.tolist())
+    print("_______________")
+    df.apply(lambda col: print(col) if any(["|" in str(c) for c in col]) else None)
+    # Logging shows that the files were found correctly
+    assert "Successfully processed standard_files" in caplog.records[-1].message
+    assert "Successfully merged 3 dataframes" in caplog.records[-2].message
+    # Logging shows the data was pivoted into wide format
+    assert "7 rows, 69 columns" in caplog.records[-1].message
+    assert df.shape[0] == 7 # ...and the output matches the logging
+    # PATNOs from each file have been merged together (ints here)
+    assert "9999" in df["PATNO"].tolist()
+    assert "9998" in df["PATNO"].tolist()
+    # Columns from all sources appear
+    assert "GENECAT" in df.columns.tolist()
+    assert "SKBIOCMP" in df.columns.tolist()
+    assert "CSFCOLL" in df.columns.tolist()
+    # Columns from duplicates appear
+    assert "ORIG_ENTRY" in df.columns.tolist()
+    assert "OFF_SCHEDULE" in df.columns.tolist()
+    # Correct merging of duplicate values for <PATNO, EVENT_ID> pairs
+    assert "PAG_NAME" in df.columns
+    assert "MUTRSLT" in df["PAG_NAME"].tolist() # Unique EVENT_ID
+    assert "LUMBAR|SKBIO" in df["PAG_NAME"].tolist() # Both at BL

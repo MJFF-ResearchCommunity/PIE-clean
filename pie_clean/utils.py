@@ -219,6 +219,10 @@ def load_single_file(modality: str, full_file_path: str):
         return pd.DataFrame()
 
     df['PATNO'] = df['PATNO'].astype(str) # Standardize PATNO immediately
+    # Remove "PPMI-" prefix from PATNO if it exists
+    df["PATNO"] = df["PATNO"].apply(
+        lambda x: x[5:] if isinstance(x, str) and x.startswith("PPMI-") else x
+    )
     if "CLINICAL_EVENT" in df.columns:
         df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
     sanitize_suffixes_in_df(df) # Rename columns ending _x or _y
@@ -326,3 +330,29 @@ def merge_data_dict(modality: str, data_dict: dict[str, pd.DataFrame]):
 
     logger.info(f"Final loaded {modality} shape: {df_merged.shape}")
     return df_merged
+
+def pipe_separate_values(ser: pd.Series):
+    """
+    When multiple values exist for a given field for a unique <PATNO, EVENT_ID>
+    pair, we handle it by including all values in a pipe-separated string. This
+    function returns either the original value (if no combination is needed,
+    because all duplicates are the same value), or a pipe-separated string. If
+    the original values are strings, with duplicate values which differ only by
+    capitalization, the values are upper-cased and pipe-separated, to give the
+    minimal possible set.
+    Examples (input -> return):
+        pd.Series([1, 1, 1]) -> 1
+        pd.Series([1, 2, 3]) -> "1|2|3"
+        pd.Series([2, 1, 3]) -> "1|2|3"
+        pd.Series(["YES", "YES", "YES"]) -> "YES"
+        pd.Series(["yes", "no", "yes"]) -> "no|yes"
+        pd.Series(["yes", "no", "YES"]) -> "NO|YES"
+    """
+    if ser.nunique() == 1: # No need for any combination
+        return ser.iloc[0]
+    if pd.api.types.is_object_dtype(ser) and \
+            len(set(ser)) != len(set(ser.str.upper())):
+        # We've got strings with dupicate values with inconsistent capitalization
+        return "|".join(sorted(list(set(ser.str.upper())))) # upper case them all
+    # Either not strings, or no inconsistent caps, so preserve format
+    return "|".join(sorted(list(set(ser))))
