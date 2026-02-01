@@ -352,7 +352,7 @@ def pipe_separate_values(ser: pd.Series):
         return ser.iloc[0]
     if pd.api.types.is_object_dtype(ser) and \
             len(set(ser)) != len(set(ser.str.upper())):
-        # We've got strings with dupicate values with inconsistent capitalization
-        return "|".join(sorted(list(set(ser.str.upper())))) # upper case them all
+        # We've got strings with duplicate values with inconsistent capitalization
+        return "|".join(sorted(list(set(ser.dropna().str.upper())))) # upper case them all
     # Either not strings, or no inconsistent caps, so preserve format
-    return "|".join(sorted(list(set(ser))))
+    return "|".join([str(s) for s in sorted(list(set(ser.dropna())))])
