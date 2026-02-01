@@ -895,7 +895,6 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
                 column_sources[col] = [i]
     dup_cols = {col: sources for col, sources in column_sources.items() \
                              if len(sources) > 1 and col not in ["PATNO", "EVENT_ID"]}
-    print(dup_cols)
     if dup_cols:
         logger.warning(f"Found {len(dup_cols)} duplicate column names across files ({list(dup_cols.keys())})")
         if combine_duplicates:
@@ -906,61 +905,15 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
                 vals = tmp.groupby(["PATNO", "EVENT_ID"]
                                   )[col].apply(pipe_separate_values)
                 for i in df_idx:
-                    print(dfs[i][["PATNO", "EVENT_ID", col]])
                     # Rewrite the dups in each df to the appropriate values
                     dfs[i][col] = dfs[i].apply(
                         lambda row: vals[(row["PATNO"],
                                           row["EVENT_ID"])], axis=1)
-                    print(dfs[i][["PATNO", "EVENT_ID", col]])
 
     if combine_duplicates and dup_cols:
-
-
-        """
-        # Create a dictionary to store the combined data
-        # Structure: {(patno, event_id): {column_name: [values]}}
-        combined_data = {}
-
-        # Process each dataframe to collect all values
-        for df_idx, df in enumerate(dfs):
-            for _, row in df.iterrows():
-                patno = row["PATNO"]
-                event_id = row["EVENT_ID"]
-                key = (patno, event_id)
-
-                if key not in combined_data:
-                    combined_data[key] = {"PATNO": patno, "EVENT_ID": event_id}
-
-                # Add all other columns
-                for col in df.columns:
-                    if col not in ["PATNO", "EVENT_ID"]:
-                        value = row[col]
-
-                        # Skip NaN values
-                        if pd.isna(value):
-                            continue
-                            
-                        # Convert to string
-                        value_str = str(value)
-                        
-                        # If column already exists, append the value
-                        if col in combined_data[key]:
-                            # Only append if it's a new value
-                            if value_str not in combined_data[key][col].split("|"):
-                                combined_data[key][col] += f"|{value_str}"
-                        else:
-                            combined_data[key][col] = value_str
-        
-        # Convert the combined data to a DataFrame
-        result_rows = []
-        for key, row_data in combined_data.items():
-            result_rows.append(row_data)
-        
-        result_df = pd.DataFrame(result_rows)
-        """
         result_df = dfs[0]
         for i, df in enumerate(dfs[1:], 1):
-            # TODO: need to concat the cols_to_drop, not merge
+            # These cols are not in the merge, because they exist in both result_df and df
             cols_to_drop = [c for c in dup_cols.keys()
                             if c in result_df.columns and c in df.columns]
             # Use outer join to keep all PATNO/EVENT_ID combinations
@@ -969,9 +922,19 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
                 df.drop(columns=cols_to_drop),
                 on=["PATNO", "EVENT_ID"],
                 how="outer",
-                suffixes=("", f"_{i}")  # Add suffix only to duplicate columns from right dataframe
+                suffixes=("", f"_{i}")  # Not needed in the combine_dups case
             )
-        #combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
+            # The non-merge cols now have to have the 2 source cols manually merged
+            for c in cols_to_drop:
+                result_df[c] = result_df.apply(
+                    lambda row: row[c] if not pd.isnull(row[c])
+                                       else df[(df["PATNO"]==row["PATNO"])&\
+                                               (df["EVENT_ID"]==row["EVENT_ID"])
+                                               ][c].iloc[0]
+                                            if row["PATNO"] in df["PATNO"].tolist()\
+                                                    and\
+                                               row["EVENT_ID"] in df["EVENT_ID"].tolist()
+                                            else np.nan, axis=1)
 
         # Log the final result
         logger.info(f"Successfully merged {len(dfs)} dataframes with combined duplicate values")
