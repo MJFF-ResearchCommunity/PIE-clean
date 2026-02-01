@@ -651,8 +651,7 @@ def test_load_and_join_biospec_files(caplog, tmp_path):
     # Normal loading and join: combine_duplicates defaults to True
     df = load_and_join_biospecimen_files(f"{DATA_DIR}/{SUB_DIR}", prefixes)
     # Logging shows that the files were found correctly
-    assert "Successfully processed standard_files" in caplog.records[-1].message
-    assert "Successfully merged 3 dataframes" in caplog.records[-2].message
+    assert "Successfully merged 3 standard_files" in caplog.records[-1].message
     # Logging shows the data was pivoted into wide format
     assert "7 rows, 69 columns" in caplog.records[-1].message
     assert df.shape[0] == 7 # ...and the output matches the logging
@@ -676,8 +675,7 @@ def test_load_and_join_biospec_files(caplog, tmp_path):
     # Normal loading and join, but don't combine_duplicates
     df = load_and_join_biospecimen_files(f"{DATA_DIR}/{SUB_DIR}", prefixes, False)
     # Logging shows that the files were found correctly
-    assert "Successfully processed standard_files" in caplog.records[-1].message
-    assert "Successfully merged 3 dataframes" in caplog.records[-2].message
+    assert "Successfully merged 3 standard_files" in caplog.records[-1].message
     # Logging shows the data was pivoted into wide format
     assert "7 rows, 78 columns" in caplog.records[-1].message
     assert df.shape[0] == 7 # ...and the output matches the logging

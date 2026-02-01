@@ -884,96 +884,73 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
         logger.error("No files were successfully loaded")
         return pd.DataFrame()
 
+    # If we need to combine duplicates, work out which cols are duplicates now
+    if combine_duplicates:
+        column_sources = {}  # Track which file each column came from
+        for i, df in enumerate(dfs):
+            for col in df.columns:
+                try:
+                    column_sources[col].append(i)
+                except KeyError:
+                    column_sources[col] = [i]
+        dup_cols = {col: sources for col, sources in column_sources.items() \
+                                 if len(sources) > 1 and col not in ["PATNO", "EVENT_ID"]}
+        if dup_cols:
+            logger.warning(f"Found {len(dup_cols)} duplicate column names across files ({list(dup_cols.keys())})")
+            if combine_duplicates:
+                logger.info("Will combine duplicate column values with pipe separator (|)")
+                for col, df_idx in dup_cols.items():
+                    # Create a df of all <PATNO, EVENT_ID, col> combos across all dfs
+                    tmp = pd.concat([dfs[i][["PATNO", "EVENT_ID", col]] for i in df_idx])
+                    vals = tmp.groupby(["PATNO", "EVENT_ID"]
+                                      )[col].apply(pipe_separate_values)
+                    for i in df_idx:
+                        # Rewrite the dups in each df to the appropriate values
+                        dfs[i][col] = dfs[i].apply(
+                            lambda row: vals[(row["PATNO"],
+                                              row["EVENT_ID"])], axis=1)
 
-    # Check for duplicate columns across dataframes
-    column_sources = {}  # Track which file each column came from
-    for i, df in enumerate(dfs):
-        for col in df.columns:
-            try:
-                column_sources[col].append(i)
-            except KeyError:
-                column_sources[col] = [i]
-    dup_cols = {col: sources for col, sources in column_sources.items() \
-                             if len(sources) > 1 and col not in ["PATNO", "EVENT_ID"]}
-    if dup_cols:
-        logger.warning(f"Found {len(dup_cols)} duplicate column names across files ({list(dup_cols.keys())})")
+    # Regardless of duplicate-handling method, the merge proceeds similarly
+    result_df = dfs[0]
+    for i, df in enumerate(dfs[1:], 1):
+        cols_to_drop = []
         if combine_duplicates:
-            logger.info("Will combine duplicate column values with pipe separator (|)")
-            for col, df_idx in dup_cols.items():
-                # Create a df of all <PATNO, EVENT_ID, col> combos across all dfs
-                tmp = pd.concat([dfs[i][["PATNO", "EVENT_ID", col]] for i in df_idx])
-                vals = tmp.groupby(["PATNO", "EVENT_ID"]
-                                  )[col].apply(pipe_separate_values)
-                for i in df_idx:
-                    # Rewrite the dups in each df to the appropriate values
-                    dfs[i][col] = dfs[i].apply(
-                        lambda row: vals[(row["PATNO"],
-                                          row["EVENT_ID"])], axis=1)
-
-    if combine_duplicates and dup_cols:
-        result_df = dfs[0]
-        for i, df in enumerate(dfs[1:], 1):
             # These cols are not in the merge, because they exist in both result_df and df
             cols_to_drop = [c for c in dup_cols.keys()
                             if c in result_df.columns and c in df.columns]
-            # Use outer join to keep all PATNO/EVENT_ID combinations
-            result_df = pd.merge(
-                result_df,
-                df.drop(columns=cols_to_drop),
-                on=["PATNO", "EVENT_ID"],
-                how="outer",
-                suffixes=("", f"_{i}")  # Not needed in the combine_dups case
-            )
-            # The non-merge cols now have to have the 2 source cols manually merged
-            for c in cols_to_drop:
-                result_df[c] = result_df.apply(
-                    lambda row: row[c] if not pd.isnull(row[c])
-                                       else df[(df["PATNO"]==row["PATNO"])&\
-                                               (df["EVENT_ID"]==row["EVENT_ID"])
-                                               ][c].iloc[0]
-                                            if row["PATNO"] in df["PATNO"].tolist()\
-                                                    and\
-                                               row["EVENT_ID"] in df["EVENT_ID"].tolist()
-                                            else np.nan, axis=1)
+        # Use outer join to keep all PATNO/EVENT_ID combinations
+        result_df = pd.merge(
+            result_df,
+            df.drop(columns=cols_to_drop),
+            on=["PATNO", "EVENT_ID"],
+            how="outer",
+            suffixes=("", f"_{i}") # Only needed in the combine_dups=False case
+        )
+        # Any non-merge cols now need to have the 2 source cols manually merged
+        for c in cols_to_drop:
+            # Take from result_df if it's not null, otherwise take from df if it's
+            # not null, otherwise explicitly make it null
+            result_df[c] = result_df.apply(
+                lambda row: row[c] if not pd.isnull(row[c])
+                                   else df[(df["PATNO"]==row["PATNO"])&\
+                                           (df["EVENT_ID"]==row["EVENT_ID"])][c].iloc[0]
+                                        if row["PATNO"] in df["PATNO"].tolist() and\
+                                           row["EVENT_ID"] in df["EVENT_ID"].tolist()
+                                        else np.nan, axis=1)
 
-        # Log the final result
-        logger.info(f"Successfully merged {len(dfs)} dataframes with combined duplicate values")
-        logger.info(f"Successfully processed standard_files data: {len(result_df)} rows, {len(result_df.columns)} columns")
-        
-        return result_df
-    
-    else:
-        # Merge all dataframes using the original method with suffixes
-        logger.info("Merging dataframes on PATNO and EVENT_ID")
+        # Check if any columns were renamed due to combine_dups=False
+        renamed_columns = [col for col in result_df.columns if col.endswith(f"_{i}")]
+        if renamed_columns:
+            logger.warning(f"After merging dataframe {i+1}, {len(renamed_columns)} columns were renamed:")
+            for col in renamed_columns[:5]:  # Show first 5 as examples
+                logger.warning(f"  '{col[:-len(f'_{i}')]}' renamed to '{col}'")
+            if len(renamed_columns) > 5:
+                logger.warning(f"  ... and {len(renamed_columns) - 5} more")
 
-        # Start with the first dataframe
-        result_df = dfs[0]
+    # Log the final result
+    logger.info(f"Successfully merged {len(dfs)} standard_files: {len(result_df)} rows, {len(result_df.columns)} columns")
 
-        # Merge with each subsequent dataframe
-        for i, df in enumerate(dfs[1:], 1):
-            # Use outer join to keep all PATNO/EVENT_ID combinations
-            result_df = pd.merge(
-                result_df, 
-                df, 
-                on=["PATNO", "EVENT_ID"], 
-                how="outer",
-                suffixes=("", f"_{i}")  # Add suffix only to duplicate columns from right dataframe
-            )
-            
-            # Check if any columns were renamed due to duplicates
-            renamed_columns = [col for col in result_df.columns if col.endswith(f"_{i}")]
-            if renamed_columns:
-                logger.warning(f"After merging dataframe {i+1}, {len(renamed_columns)} columns were renamed:")
-                for col in renamed_columns[:5]:  # Show first 5 as examples
-                    logger.warning(f"  '{col[:-len(f'_{i}')]}' renamed to '{col}'")
-                if len(renamed_columns) > 5:
-                    logger.warning(f"  ... and {len(renamed_columns) - 5} more")
-        
-        # Log the final result
-        logger.info(f"Successfully merged {len(dfs)} dataframes with suffixed duplicate columns")
-        logger.info(f"Successfully processed standard_files data: {len(result_df)} rows, {len(result_df.columns)} columns")
-        
-        return result_df
+    return result_df
 
 
 TEST_FILES = {
