@@ -119,24 +119,55 @@ def _process_test_file(matching_files, project_name, col_prefix):
     # Pivot the data to create columns for each TESTNAME
     try:
         # First, make sure we have no duplicates for the same PATNO, EVENT_ID, and TESTNAME.
-        # Occasionally, the same test will be inconsistently capitalized
+        ## Occasionally, the same test will be inconsistently capitalized
         uppers = [test.upper() for test in combined_df["TESTNAME"].unique()]
         case_dups = set([test for test in uppers if uppers.count(test) > 1])
         if len(case_dups) > 0:
             logger.info(f"Found inconsistent capitalization for columns {list(case_dups)}")
             combined_df["TESTNAME"] = combined_df["TESTNAME"].apply(
                     lambda tn: tn.upper() if tn.upper() in case_dups else tn)
-        # If there are still duplicates, append the units
+        ## If there are still duplicates, try to append the units
         dup_rows = combined_df.duplicated(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep=False)
+        # Create a mapping of {TESTNAME: TESTNAME_UNITS} if duplicated
+        test_map = {}
+        for i, row in combined_df.iterrows():
+            alt = f"{row['TESTNAME']}_{row['UNITS']}" if dup_rows[i] \
+                                                      else row["TESTNAME"]
+            try:
+                test_map[row["TESTNAME"]].add(alt)
+            except KeyError:
+                test_map[row["TESTNAME"]] = {alt}
+        # Does appending the units actually help?
+        append_units = []
+        for k, v in test_map.items():
+            if len(v) == 1: # Simple case, no duplicates
+                continue
+            logger.debug(f"Found multiple mappings for {k}: {v}")
+            if k in v and len(v) > 2:
+                # TESTNAME exists as well as TESTNAME_UNITs, so only some patients
+                # have dups. There are 2 or more UNITs, so these should all get units.
+                append_units.append(k)
+            elif k not in v:
+                # We have 2 or more UNITS, and not the original TESTNAME,
+                # so these should all get units.
+                append_units.append(k)
+            # else, multiple mappings come from a subset of patients having dups,
+            # so the map is {k: {k, k_UNITS}}. No need to append units to these.
+
+        # Now we can rewrite the TESTNAMEs based on columns in append_units
         combined_df["TESTNAME"] = combined_df.apply(lambda row:
-                f"{row['TESTNAME']}_{row['UNITS']}" if dup_rows[row.name] \
+                f"{row['TESTNAME']}_{row['UNITS']}" if row["TESTNAME"] in append_units \
                                                     else row["TESTNAME"], axis=1)
-        # If there are STILL duplicates, keep the first occurrence
+        ## If there are STILL duplicates, combine values with a pipe (|)
+        vals = combined_df.groupby(["PATNO", "EVENT_ID", "TESTNAME"]
+                                   ).TESTVALUE.apply(pipe_separate_values)
+        combined_df["TESTVALUE"] = combined_df.apply(
+                lambda row: vals[(row["PATNO"], row["EVENT_ID"], row["TESTNAME"])], axis=1)
         combined_df = combined_df.drop_duplicates(subset=["PATNO", "EVENT_ID", "TESTNAME"], keep="first")
-        # Now drop the UNITS column
+        ## Now drop the UNITS column
         combined_df = combined_df.drop(columns="UNITS")
 
-        # Pivot the data
+        ## Pivot the data
         pivot_columns = ["PATNO", "EVENT_ID"]
         if "SEX" in combined_df.columns:
             pivot_columns.append("SEX")
@@ -147,7 +178,7 @@ def _process_test_file(matching_files, project_name, col_prefix):
             index=pivot_columns,
             columns="TESTNAME",
             values="TESTVALUE",
-            aggfunc="first"  # In case there are still duplicates
+            aggfunc="first" # Need a placeholder that works for numeric and object
         ).reset_index()
 
         # Rename columns to add project-specific prefix to TESTNAME columns
@@ -832,151 +863,94 @@ def load_and_join_biospecimen_files(folder_path: str, file_prefixes: list, combi
         return pd.DataFrame()
 
     get_prefix = lambda filename: [p for p in file_prefixes \
-            if os.file.basename(filename).startswith(p)][0]
+            if os.path.basename(filename).startswith(p)][0]
     # Group files by prefix for logging purposes
     files_by_prefix = {}
     for file_path in matching_files:
-        prefix = get_prefix(filepath)
+        prefix = get_prefix(file_path)
         if prefix not in files_by_prefix:
             files_by_prefix[prefix] = []
         files_by_prefix[prefix].append(file_path)
-    
+
     # Log the files found for each prefix
     for prefix, files in files_by_prefix.items():
         logger.info(f"Found {len(files)} files for prefix '{prefix}'")
-    
+
     # Load each file and prepare for merging
-    dataframes = []
-    column_sources = {}  # Track which file each column came from
-    
-    for file_path in matching_files:
-        try:
-            logger.info(f"Loading file: {file_path}")
-            df = pd.read_csv(file_path)
-            
-            # Rename CLINICAL_EVENT to EVENT_ID if it exists
-            if "CLINICAL_EVENT" in df.columns and "EVENT_ID" not in df.columns:
-                df = df.rename(columns={"CLINICAL_EVENT": "EVENT_ID"})
-            
-            # Check if required columns exist
-            if "PATNO" not in df.columns or "EVENT_ID" not in df.columns:
-                logger.warning(f"File {file_path} is missing PATNO or EVENT_ID columns, skipping")
-                continue
-            
-            # Remove "PPMI-" prefix from PATNO if it exists
-            if df["PATNO"].dtype == object:  # Only process if PATNO is a string type
-                df["PATNO"] = df["PATNO"].apply(
-                    lambda x: x[5:] if isinstance(x, str) and x.startswith("PPMI-") else x
-                )
-            
-            # Track the source of each column
-            filename = os.path.basename(file_path)
-            for col in df.columns:
-                if col not in ["PATNO", "EVENT_ID"]:  # Don't track join columns
-                    if col in column_sources:
-                        column_sources[col].append(filename)
-                    else:
-                        column_sources[col] = [filename]
-            
-            dataframes.append(df)
-            logger.info(f"Successfully loaded {filename} with {len(df)} rows and {len(df.columns)} columns")
-        
-        except Exception as e:
-            logger.error(f"Error loading file {file_path}: {e}")
-    
-    if not dataframes:
-        logger.warning("No files were successfully loaded")
+    dfs = [load_single_file(BIOSPECIMEN, f) for f in matching_files]
+    dfs = [df for df in dfs if not df.empty] # Now remove empties
+
+    if not dfs:
+        logger.error("No files were successfully loaded")
         return pd.DataFrame()
-    
-    # Check for duplicate columns across dataframes
-    duplicate_columns = {col: sources for col, sources in column_sources.items() if len(sources) > 1}
-    if duplicate_columns:
-        logger.warning(f"Found {len(duplicate_columns)} duplicate column names across files:")
-        for col, sources in duplicate_columns.items():
-            logger.warning(f"  Column '{col}' appears in: {', '.join(sources)}")
-    
-    if combine_duplicates and duplicate_columns:
-        logger.info("Will combine duplicate column values with pipe separator (|)")
-        
-        # Create a dictionary to store the combined data
-        # Structure: {(patno, event_id): {column_name: [values]}}
-        combined_data = {}
-        
-        # Process each dataframe to collect all values
-        for df_idx, df in enumerate(dataframes):
-            for _, row in df.iterrows():
-                patno = row["PATNO"]
-                event_id = row["EVENT_ID"]
-                key = (patno, event_id)
-                
-                if key not in combined_data:
-                    combined_data[key] = {"PATNO": patno, "EVENT_ID": event_id}
-                
-                # Add all other columns
-                for col in df.columns:
-                    if col not in ["PATNO", "EVENT_ID"]:
-                        value = row[col]
-                        
-                        # Skip NaN values
-                        if pd.isna(value):
-                            continue
-                            
-                        # Convert to string
-                        value_str = str(value)
-                        
-                        # If column already exists, append the value
-                        if col in combined_data[key]:
-                            # Only append if it's a new value
-                            if value_str not in combined_data[key][col].split("|"):
-                                combined_data[key][col] += f"|{value_str}"
-                        else:
-                            combined_data[key][col] = value_str
-        
-        # Convert the combined data to a DataFrame
-        result_rows = []
-        for key, row_data in combined_data.items():
-            result_rows.append(row_data)
-        
-        result_df = pd.DataFrame(result_rows)
-        
-        # Log the final result
-        logger.info(f"Successfully merged {len(dataframes)} dataframes with combined duplicate values")
-        logger.info(f"Final dataframe has {len(result_df)} rows and {len(result_df.columns)} columns")
-        
-        return result_df
-    
-    else:
-        # Merge all dataframes using the original method with suffixes
-        logger.info("Merging dataframes on PATNO and EVENT_ID")
-        
-        # Start with the first dataframe
-        result_df = dataframes[0]
-        
-        # Merge with each subsequent dataframe
-        for i, df in enumerate(dataframes[1:], 1):
-            # Use outer join to keep all PATNO/EVENT_ID combinations
-            result_df = pd.merge(
-                result_df, 
-                df, 
-                on=["PATNO", "EVENT_ID"], 
-                how="outer",
-                suffixes=("", f"_{i}")  # Add suffix only to duplicate columns from right dataframe
-            )
-            
-            # Check if any columns were renamed due to duplicates
-            renamed_columns = [col for col in result_df.columns if col.endswith(f"_{i}")]
-            if renamed_columns:
-                logger.warning(f"After merging dataframe {i+1}, {len(renamed_columns)} columns were renamed:")
-                for col in renamed_columns[:5]:  # Show first 5 as examples
-                    logger.warning(f"  '{col[:-len(f'_{i}')]}' renamed to '{col}'")
-                if len(renamed_columns) > 5:
-                    logger.warning(f"  ... and {len(renamed_columns) - 5} more")
-        
-        # Log the final result
-        logger.info(f"Successfully merged {len(dataframes)} dataframes with suffixed duplicate columns")
-        logger.info(f"Final dataframe has {len(result_df)} rows and {len(result_df.columns)} columns")
-        
-        return result_df
+
+    # If we need to combine duplicates, work out which cols are duplicates now
+    if combine_duplicates:
+        column_sources = {}  # Track which file each column came from
+        for i, df in enumerate(dfs):
+            for col in df.columns:
+                try:
+                    column_sources[col].append(i)
+                except KeyError:
+                    column_sources[col] = [i]
+        dup_cols = {col: sources for col, sources in column_sources.items() \
+                                 if len(sources) > 1 and col not in ["PATNO", "EVENT_ID"]}
+        if dup_cols:
+            logger.warning(f"Found {len(dup_cols)} duplicate column names across files ({list(dup_cols.keys())})")
+            if combine_duplicates:
+                logger.info("Will combine duplicate column values with pipe separator (|)")
+                for col, df_idx in dup_cols.items():
+                    # Create a df of all <PATNO, EVENT_ID, col> combos across all dfs
+                    tmp = pd.concat([dfs[i][["PATNO", "EVENT_ID", col]] for i in df_idx])
+                    vals = tmp.groupby(["PATNO", "EVENT_ID"]
+                                      )[col].apply(pipe_separate_values)
+                    for i in df_idx:
+                        # Rewrite the dups in each df to the appropriate values
+                        dfs[i][col] = dfs[i].apply(
+                            lambda row: vals[(row["PATNO"],
+                                              row["EVENT_ID"])], axis=1)
+
+    # Regardless of duplicate-handling method, the merge proceeds similarly
+    result_df = dfs[0]
+    for i, df in enumerate(dfs[1:], 1):
+        cols_to_drop = []
+        if combine_duplicates:
+            # These cols are not in the merge, because they exist in both result_df and df
+            cols_to_drop = [c for c in dup_cols.keys()
+                            if c in result_df.columns and c in df.columns]
+        # Use outer join to keep all PATNO/EVENT_ID combinations
+        result_df = pd.merge(
+            result_df,
+            df.drop(columns=cols_to_drop),
+            on=["PATNO", "EVENT_ID"],
+            how="outer",
+            suffixes=("", f"_{i}") # Only needed in the combine_dups=False case
+        )
+        # Any non-merge cols now need to have the 2 source cols manually merged
+        for c in cols_to_drop:
+            # Take from result_df if it's not null, otherwise take from df if it's
+            # not null, otherwise explicitly make it null
+            result_df[c] = result_df.apply(
+                lambda row: row[c] if not pd.isnull(row[c])
+                                   else df[(df["PATNO"]==row["PATNO"])&\
+                                           (df["EVENT_ID"]==row["EVENT_ID"])][c].iloc[0]
+                                        if row["PATNO"] in df["PATNO"].tolist() and\
+                                           row["EVENT_ID"] in df["EVENT_ID"].tolist()
+                                        else np.nan, axis=1)
+
+        # Check if any columns were renamed due to combine_dups=False
+        renamed_columns = [col for col in result_df.columns if col.endswith(f"_{i}")]
+        if renamed_columns:
+            logger.warning(f"After merging dataframe {i+1}, {len(renamed_columns)} columns were renamed:")
+            for col in renamed_columns[:5]:  # Show first 5 as examples
+                logger.warning(f"  '{col[:-len(f'_{i}')]}' renamed to '{col}'")
+            if len(renamed_columns) > 5:
+                logger.warning(f"  ... and {len(renamed_columns) - 5} more")
+
+    # Log the final result
+    logger.info(f"Successfully merged {len(dfs)} standard_files: {len(result_df)} rows, {len(result_df.columns)} columns")
+
+    return result_df
 
 
 TEST_FILES = {
@@ -1022,7 +996,7 @@ def load_biospecimen_data(data_path: str, source: str = "PPMI", exclude: list = 
         logger.warning(f"Biospecimen directory not found: {biospecimen_path}")
         return biospecimen_data
 
-    # Some files follow a regular format of TEST_NAME, TEST_VALUE. These can
+    # Some files follow a regular format of TESTNAME, TESTVALUE. These can
     # all be processed in the same way.
     for key in TEST_FILES:
         if key in exclude:

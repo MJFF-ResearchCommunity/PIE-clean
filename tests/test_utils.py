@@ -132,3 +132,14 @@ def test_sanitize_suffixes(caplog):
     assert tmp[f"{c1}_col"].iloc[0] == 0 # First in iloc order gets "_col"
     assert tmp[f"{c1}_col1"].iloc[0] == 1 # Second gets "_col1"
     assert f"{c2}_col" in tmp.columns # Third is a different name, so "_col"
+
+def test_pipe_separate_values(caplog):
+    assert pipe_separate_values(pd.Series([1, 1, 1])) == 1
+    assert pipe_separate_values(pd.Series([1, 2, 3])) == "1|2|3"
+    assert pipe_separate_values(pd.Series([3, 2, 1])) == "1|2|3"
+    assert pipe_separate_values(pd.Series([1, 2, 2])) == "1|2"
+    assert pipe_separate_values(pd.Series([1, np.nan, 2])) == "1.0|2.0"
+    assert pipe_separate_values(pd.Series(["YES", "YES", "YES"])) == "YES"
+    assert pipe_separate_values(pd.Series(["yes", "no", "yes"])) == "no|yes"
+    assert pipe_separate_values(pd.Series(["yes", "no", "YES"])) == "NO|YES"
+    assert pipe_separate_values(pd.Series(["yes", "no", np.nan])) == "no|yes"
